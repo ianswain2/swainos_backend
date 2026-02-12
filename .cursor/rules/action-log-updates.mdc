@@ -1,0 +1,9 @@
+---
+description: Log completed work in SwianOS_Documentation action-log
+alwaysApply: true
+---
+
+# Action Log Updates
+
+- After completing any task or milestone, append a short, timestamped line to `SwianOS_Documentation/action-plan/action-log`.
+- Keep entries concise (e.g., "Confirmed initial migrations have been run").

@@ -1,0 +1,13 @@
+---
+description: Backend naming conventions for SwainOS
+alwaysApply: true
+---
+# SwainOS Backend Naming Conventions
+
+- Files/modules: `snake_case.py`.
+- Classes: `PascalCase`.
+- Functions/variables: `snake_case` with verb prefixes.
+- Constants: `SCREAMING_SNAKE_CASE`.
+- Private helpers: leading underscore.
+- Database: tables/columns `snake_case`, plural tables; `created_at`/`updated_at`.
+- API: plural resources (`/api/v1/bookings`), `snake_case` query params.

@@ -1,0 +1,17 @@
+---
+description: Backend development guidelines for SwainOS
+alwaysApply: true
+---
+# SwainOS Backend Development Guidelines
+
+- Stack: Python + FastAPI; async I/O where appropriate.
+- Layering: routes/controllers → services (business rules) → repositories (DB access).
+- Validation: use schemas at the API boundary; return structured error envelopes.
+- Data conventions: DB `snake_case`, API JSON `camelCase`, map at repo boundary.
+- Errors: never swallow exceptions; log with context; use custom domain errors.
+- Security: env vars only; no secrets in repo; validate all input; parameterized queries.
+- Performance: paginate list endpoints; cache expensive computations; profile before tuning.
+- Formatting: Black (line length 100), isort; type hints required; mypy-friendly.
+- Tests: pytest for unit/integration; cover analytics/services and error paths.
+- No backward compatibility: when requirements change, refactor fully and cleanly.
+- Code quality: consistent naming, clean organization, and only necessary comments.
