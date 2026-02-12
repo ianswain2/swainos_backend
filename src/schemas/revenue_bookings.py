@@ -65,14 +65,6 @@ class BookingForecastPoint(BaseSchema):
     confidence: float = Field(..., ge=0.0, le=1.0)
 
 
-class BookingListFilters(BaseSchema):
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
-    currency_code: Optional[str] = None
-    page: int = 1
-    page_size: int = Field(default=50, ge=1, le=500)
-
-
 class CashFlowFilters(BaseSchema):
     time_window: str = "90d"
     currency_code: Optional[str] = None

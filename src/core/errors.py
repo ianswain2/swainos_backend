@@ -27,11 +27,6 @@ class NotFoundError(AppError):
         super().__init__(code="not_found", message=message, status_code=404)
 
 
-class UnauthorizedError(AppError):
-    def __init__(self, message: str = "Unauthorized") -> None:
-        super().__init__(code="unauthorized", message=message, status_code=401)
-
-
 class BadRequestError(AppError):
     def __init__(self, message: str = "Bad request") -> None:
         super().__init__(code="bad_request", message=message, status_code=400)
