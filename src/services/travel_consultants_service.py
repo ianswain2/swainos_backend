@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import calendar
 from collections import defaultdict
-from datetime import date
-from statistics import median
+from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
 
 from src.core.errors import NotFoundError
@@ -24,9 +23,15 @@ from src.schemas.travel_consultants import (
     TravelConsultantLeaderboardFilters,
     TravelConsultantLeaderboardResponse,
     TravelConsultantLeaderboardRow,
+    TravelConsultantOperationalItinerary,
+    TravelConsultantOperationalSnapshot,
     TravelConsultantProfileFilters,
     TravelConsultantProfileResponse,
     TravelConsultantSignal,
+    TravelConsultantThreeYearMatrix,
+    TravelConsultantThreeYearPerformance,
+    TravelConsultantThreeYearSeries,
+    TravelConsultantThreeYearVariance,
     TravelConsultantTrendStory,
     TravelConsultantTrendStoryPoint,
 )
@@ -36,6 +41,7 @@ SECTION_ORDER = [
     "heroKpis",
     "trendStory",
     "funnelHealth",
+    "operationalSnapshot",
     "forecastAndTarget",
     "compensationImpact",
     "signals",
@@ -61,6 +67,13 @@ class TravelConsultantsService:
         funnel_rows = self.repository.list_funnel_monthly(period_start, period_end)
         baseline_rows = self.repository.list_leaderboard_monthly(baseline_start, baseline_end)
         baseline_revenue_by_employee = self._sum_baseline_revenue_by_employee(baseline_rows)
+        ytd_current_start, ytd_current_end, ytd_baseline_start, ytd_baseline_end = (
+            self._resolve_ytd_comparison_windows(filters.year)
+        )
+        ytd_current_rows = self.repository.list_leaderboard_monthly(ytd_current_start, ytd_current_end)
+        ytd_baseline_rows = self.repository.list_leaderboard_monthly(ytd_baseline_start, ytd_baseline_end)
+        ytd_current_revenue_by_employee = self._sum_baseline_revenue_by_employee(ytd_current_rows)
+        ytd_baseline_revenue_by_employee = self._sum_baseline_revenue_by_employee(ytd_baseline_rows)
 
         aggregate = self._aggregate_leaderboard_rows(travel_rows, funnel_rows, filters.domain)
         sort_multiplier = -1 if filters.sort_order == "desc" else 1
@@ -74,6 +87,13 @@ class TravelConsultantsService:
             target_revenue = baseline_revenue * 1.12 if baseline_revenue > 0 else 0.0
             growth_variance_pct = (
                 (row["booked_revenue"] - target_revenue) / target_revenue if target_revenue else 0.0
+            )
+            ytd_current_revenue = ytd_current_revenue_by_employee.get(row["employee_id"], 0.0)
+            ytd_baseline_revenue = ytd_baseline_revenue_by_employee.get(row["employee_id"], 0.0)
+            yoy_to_date_variance_pct = (
+                (ytd_current_revenue - ytd_baseline_revenue) / ytd_baseline_revenue
+                if ytd_baseline_revenue
+                else 0.0
             )
             ranked_rows.append(
                 TravelConsultantLeaderboardRow(
@@ -94,9 +114,10 @@ class TravelConsultantsService:
                     closed_lost_count=row["closed_lost_count"],
                     conversion_rate=row["conversion_rate"],
                     close_rate=row["close_rate"],
-                    median_speed_to_book_days=row["median_speed_to_book_days"],
+                    avg_speed_to_book_days=row["avg_speed_to_book_days"],
                     spend_to_book=None,
                     growth_target_variance_pct=round(growth_variance_pct, 4),
+                    yoy_to_date_variance_pct=round(yoy_to_date_variance_pct, 4),
                 )
             )
         highlights = self._build_leaderboard_highlights(ranked_rows)
@@ -121,6 +142,13 @@ class TravelConsultantsService:
         profile_rows = self.repository.list_profile_monthly(period_start, period_end, employee_id)
         funnel_rows = self.repository.list_funnel_monthly(period_start, period_end, employee_id)
         compensation_rows = self.repository.list_compensation_monthly(period_start, period_end, employee_id)
+        closed_won_status_values = self.repository.list_closed_won_status_values()
+        closed_won_itineraries = self.repository.list_closed_won_itineraries_by_travel_period(
+            employee_id=employee_id,
+            start_date=period_start,
+            end_date=period_end,
+            closed_won_status_values=closed_won_status_values,
+        )
 
         booked_revenue = sum(self._to_float(row.get("booked_revenue_amount")) for row in profile_rows)
         commission_income = sum(
@@ -129,6 +157,21 @@ class TravelConsultantsService:
         margin_amount = sum(self._to_float(row.get("margin_amount")) for row in profile_rows)
         margin_pct = (margin_amount / booked_revenue) if booked_revenue else 0.0
         itinerary_count = sum(self._to_int(row.get("itinerary_count")) for row in profile_rows)
+        pax_count = sum(self._to_int(row.get("pax_count")) for row in profile_rows)
+        avg_gross_profit = (commission_income / itinerary_count) if itinerary_count else 0.0
+        avg_group_size = (pax_count / itinerary_count) if itinerary_count else 0.0
+
+        weighted_nights_total = 0.0
+        weighted_nights_denominator = 0
+        for row in profile_rows:
+            row_itinerary_count = self._to_int(row.get("itinerary_count"))
+            if row_itinerary_count <= 0:
+                continue
+            weighted_nights_total += self._to_float(row.get("avg_number_of_nights")) * row_itinerary_count
+            weighted_nights_denominator += row_itinerary_count
+        avg_itinerary_nights = (
+            weighted_nights_total / weighted_nights_denominator if weighted_nights_denominator else 0.0
+        )
 
         lead_count = sum(self._to_int(row.get("lead_count")) for row in funnel_rows)
         closed_won_count = sum(self._to_int(row.get("closed_won_count")) for row in funnel_rows)
@@ -141,20 +184,52 @@ class TravelConsultantsService:
             for row in funnel_rows
             if row.get("median_speed_to_book_days") is not None
         ]
-        median_speed_to_book_days = float(median(speed_values)) if speed_values else None
+        avg_speed_to_book_days = (sum(speed_values) / len(speed_values)) if speed_values else None
+
+        lead_time_samples: List[float] = []
+        speed_to_close_samples: List[float] = []
+        for itinerary in closed_won_itineraries:
+            created_date = self._optional_datetime_to_date(itinerary.get("created_at"))
+            travel_start_date = self._optional_to_date(itinerary.get("travel_start_date"))
+            close_date = self._optional_to_date(itinerary.get("close_date"))
+
+            if created_date and travel_start_date:
+                lead_time_days = (travel_start_date - created_date).days
+                if lead_time_days >= 0:
+                    lead_time_samples.append(float(lead_time_days))
+
+            if created_date and close_date:
+                speed_to_close_days = (close_date - created_date).days
+                if speed_to_close_days >= 0:
+                    speed_to_close_samples.append(float(speed_to_close_days))
+
+        avg_lead_time_days = (
+            sum(lead_time_samples) / len(lead_time_samples) if lead_time_samples else None
+        )
+        avg_speed_to_close_days = (
+            sum(speed_to_close_samples) / len(speed_to_close_samples) if speed_to_close_samples else None
+        )
 
         trend_story, comparison_context = self._build_trend_story(employee_id, period_end, filters.yoy_mode)
+        ytd_variance_pct = self._calculate_employee_ytd_variance(employee_id, period_end.year)
+        three_year_performance = self._build_three_year_performance(employee_id, period_end.year)
         forecast_response = self.get_forecast(
             employee_id=employee_id,
             filters=TravelConsultantForecastFilters(horizon_months=12, currency_code=filters.currency_code),
         )
         compensation_impact = self._build_compensation_impact(compensation_rows)
+        operational_snapshot = self._build_operational_snapshot(employee_id)
         hero_kpis = self._build_hero_kpis(
             booked_revenue=booked_revenue,
             conversion_rate=conversion_rate,
             close_rate=close_rate,
             margin_pct=margin_pct,
             trend_story=trend_story,
+            avg_gross_profit=avg_gross_profit,
+            avg_itinerary_nights=avg_itinerary_nights,
+            avg_group_size=avg_group_size,
+            avg_lead_time_days=avg_lead_time_days,
+            avg_speed_to_close_days=avg_speed_to_close_days,
         )
         funnel_health = TravelConsultantFunnelHealth(
             lead_count=lead_count,
@@ -162,14 +237,14 @@ class TravelConsultantsService:
             closed_lost_count=closed_lost_count,
             conversion_rate=round(conversion_rate, 4),
             close_rate=round(close_rate, 4),
-            median_speed_to_book_days=median_speed_to_book_days,
+            avg_speed_to_book_days=round(avg_speed_to_book_days, 1) if avg_speed_to_book_days is not None else None,
         )
         signals = self._build_signals(
             trend_story=trend_story,
             conversion_rate=conversion_rate,
             close_rate=close_rate,
             margin_pct=margin_pct,
-            median_speed_to_book_days=median_speed_to_book_days,
+            speed_to_book_days=avg_speed_to_book_days,
         )
         insight_cards = self._build_insight_cards(signals, employee.first_name, itinerary_count)
         return TravelConsultantProfileResponse(
@@ -177,12 +252,15 @@ class TravelConsultantsService:
             section_order=SECTION_ORDER,
             hero_kpis=hero_kpis,
             trend_story=trend_story,
+            three_year_performance=three_year_performance,
+            ytd_variance_pct=round(ytd_variance_pct, 4),
             funnel_health=funnel_health,
             forecast_and_target=TravelConsultantForecastSection(
                 timeline=forecast_response.timeline,
                 summary=forecast_response.summary,
             ),
             compensation_impact=compensation_impact,
+            operational_snapshot=operational_snapshot,
             signals=signals,
             insight_cards=insight_cards,
             comparison_context=comparison_context,
@@ -303,7 +381,7 @@ class TravelConsultantsService:
             )
             speed_to_book_days = row.get("median_speed_to_book_days")
             if speed_to_book_days is not None:
-                bucket["median_speed_samples"].append(self._to_float(speed_to_book_days))
+                bucket["speed_samples"].append(self._to_float(speed_to_book_days))
         for bucket in aggregate.values():
             lead_count = int(bucket["lead_count"])
             closed_won_count = int(bucket["closed_won_count"])
@@ -319,8 +397,10 @@ class TravelConsultantsService:
             bucket["margin_pct"] = (
                 float(bucket["margin_amount"]) / booked_revenue_travel if booked_revenue_travel else 0.0
             )
-            speed_samples = [value for value in bucket["median_speed_samples"] if value > 0]
-            bucket["median_speed_to_book_days"] = float(median(speed_samples)) if speed_samples else None
+            speed_samples = [value for value in bucket["speed_samples"] if value > 0]
+            bucket["avg_speed_to_book_days"] = (
+                (sum(speed_samples) / len(speed_samples)) if speed_samples else None
+            )
         return aggregate
 
     @staticmethod
@@ -353,8 +433,8 @@ class TravelConsultantsService:
             "lead_count": 0,
             "closed_won_count": 0,
             "closed_lost_count": 0,
-            "median_speed_samples": [],
-            "median_speed_to_book_days": None,
+            "speed_samples": [],
+            "avg_speed_to_book_days": None,
             "conversion_rate": 0.0,
             "close_rate": 0.0,
             "margin_pct": 0.0,
@@ -517,6 +597,11 @@ class TravelConsultantsService:
         close_rate: float,
         margin_pct: float,
         trend_story: TravelConsultantTrendStory,
+        avg_gross_profit: float,
+        avg_itinerary_nights: float,
+        avg_group_size: float,
+        avg_lead_time_days: Optional[float],
+        avg_speed_to_close_days: Optional[float],
     ) -> List[TravelConsultantKpiCard]:
         trend_direction = "up" if trend_story.yoy_delta_pct >= 0 else "down"
         trend_strength = "high" if abs(trend_story.yoy_delta_pct) >= 0.1 else "medium"
@@ -557,6 +642,51 @@ class TravelConsultantsService:
                 trend_strength="medium",
                 is_lagging_indicator=True,
             ),
+            TravelConsultantKpiCard(
+                key="avg_gross_profit",
+                display_label="Average Gross Profit",
+                description="Average gross profit per closed-won itinerary in selected period.",
+                value=round(avg_gross_profit, 2),
+                trend_direction="up" if avg_gross_profit > 0 else "flat",
+                trend_strength="medium",
+                is_lagging_indicator=False,
+            ),
+            TravelConsultantKpiCard(
+                key="avg_itinerary_nights",
+                display_label="Average Itinerary Nights",
+                description="Weighted average itinerary nights for closed-won travel.",
+                value=round(avg_itinerary_nights, 1),
+                trend_direction="up" if avg_itinerary_nights >= 6 else "flat",
+                trend_strength="low",
+                is_lagging_indicator=False,
+            ),
+            TravelConsultantKpiCard(
+                key="avg_group_size",
+                display_label="Average Group Size",
+                description="Average passengers per closed-won itinerary.",
+                value=round(avg_group_size, 1),
+                trend_direction="up" if avg_group_size >= 2 else "flat",
+                trend_strength="low",
+                is_lagging_indicator=False,
+            ),
+            TravelConsultantKpiCard(
+                key="avg_lead_time",
+                display_label="Average Lead Time",
+                description="Average days from lead created to travel start for closed-won itineraries.",
+                value=round(avg_lead_time_days or 0.0, 1),
+                trend_direction="up" if (avg_lead_time_days or 0.0) >= 30 else "down",
+                trend_strength="low",
+                is_lagging_indicator=False,
+            ),
+            TravelConsultantKpiCard(
+                key="avg_speed_to_close",
+                display_label="Average Speed to Close",
+                description="Average days from lead created to booking close date.",
+                value=round(avg_speed_to_close_days or 0.0, 1),
+                trend_direction="up" if (avg_speed_to_close_days or 0.0) <= 45 else "down",
+                trend_strength="medium",
+                is_lagging_indicator=True,
+            ),
         ]
 
     @staticmethod
@@ -565,7 +695,7 @@ class TravelConsultantsService:
         conversion_rate: float,
         close_rate: float,
         margin_pct: float,
-        median_speed_to_book_days: Optional[float],
+        speed_to_book_days: Optional[float],
     ) -> List[TravelConsultantSignal]:
         signals: List[TravelConsultantSignal] = []
         signals.append(
@@ -611,13 +741,13 @@ class TravelConsultantsService:
                 is_lagging_indicator=True,
             )
         )
-        if median_speed_to_book_days is not None:
+        if speed_to_book_days is not None:
             signals.append(
                 TravelConsultantSignal(
                     key="speed_to_book",
                     display_label="Speed to Book",
-                    description=f"Median speed to book is {round(median_speed_to_book_days, 1)} days.",
-                    trend_direction="up" if median_speed_to_book_days <= 45 else "down",
+                    description=f"Average speed to book is {round(speed_to_book_days, 1)} days.",
+                    trend_direction="up" if speed_to_book_days <= 45 else "down",
                     trend_strength="medium",
                     is_lagging_indicator=True,
                 )
@@ -674,6 +804,9 @@ class TravelConsultantsService:
             period_start = TravelConsultantsService._add_months(end_month_start, -11)
             period_end = TravelConsultantsService._month_end(end_month_start)
             return period_start, period_end
+        if period_type == "year":
+            period_year = year or today.year
+            return date(period_year, 1, 1), date(period_year, 12, 31)
         period_year = year or today.year
         period_month = month or today.month
         period_start = date(period_year, period_month, 1)
@@ -681,15 +814,168 @@ class TravelConsultantsService:
         return period_start, period_end
 
     @staticmethod
+    def _resolve_ytd_comparison_windows(
+        selected_year: Optional[int],
+    ) -> Tuple[date, date, date, date]:
+        today = date.today()
+        target_year = selected_year or today.year
+        # Month-grain YTD: Jan -> current month for current year, otherwise full Jan-Dec.
+        ytd_month = today.month if target_year == today.year else 12
+        current_start = date(target_year, 1, 1)
+        current_end = TravelConsultantsService._month_end(date(target_year, ytd_month, 1))
+        baseline_year = target_year - 1
+        baseline_start = date(baseline_year, 1, 1)
+        baseline_end = TravelConsultantsService._month_end(date(baseline_year, ytd_month, 1))
+        return current_start, current_end, baseline_start, baseline_end
+
+    @staticmethod
     def _resolve_baseline_window(period_type: str, period_start: date, period_end: date) -> Tuple[date, date]:
         if period_type == "rolling12":
             baseline_start = TravelConsultantsService._add_months(period_start, -12)
             baseline_end = TravelConsultantsService._add_months(period_end, -12)
             return baseline_start, baseline_end
+        if period_type == "year":
+            baseline_year = period_start.year - 1
+            return date(baseline_year, 1, 1), date(baseline_year, 12, 31)
         return date(period_start.year - 1, period_start.month, 1), date(
             period_end.year - 1, period_end.month, min(
                 period_end.day, calendar.monthrange(period_end.year - 1, period_end.month)[1]
             )
+        )
+
+    def _build_operational_snapshot(self, employee_id: str) -> TravelConsultantOperationalSnapshot:
+        today = date.today()
+        open_status_values = self.repository.list_open_status_values()
+        traveling_rows = self.repository.list_current_traveling_itineraries(employee_id, today, limit=10)
+        open_rows = self.repository.list_top_open_itineraries(employee_id, open_status_values, limit=5)
+        return TravelConsultantOperationalSnapshot(
+            current_traveling_files=[self._map_operational_itinerary(row) for row in traveling_rows],
+            top_open_itineraries=[self._map_operational_itinerary(row) for row in open_rows],
+        )
+
+    def _calculate_employee_ytd_variance(self, employee_id: str, target_year: int) -> float:
+        current_start, current_end, baseline_start, baseline_end = self._resolve_ytd_comparison_windows(
+            target_year
+        )
+        current_rows = self.repository.list_leaderboard_monthly(current_start, current_end, employee_id)
+        baseline_rows = self.repository.list_leaderboard_monthly(baseline_start, baseline_end, employee_id)
+        current_total = sum(self._to_float(row.get("booked_revenue_amount")) for row in current_rows)
+        baseline_total = sum(self._to_float(row.get("booked_revenue_amount")) for row in baseline_rows)
+        return ((current_total - baseline_total) / baseline_total) if baseline_total else 0.0
+
+    def _build_three_year_performance(
+        self, employee_id: str, anchor_year: int
+    ) -> TravelConsultantThreeYearPerformance:
+        years = [anchor_year - 2, anchor_year - 1, anchor_year]
+        range_start = date(years[0], 1, 1)
+        range_end = date(years[-1], 12, 31)
+        travel_rows = self.repository.list_profile_monthly(range_start, range_end, employee_id)
+        funnel_rows = self.repository.list_funnel_monthly(range_start, range_end, employee_id)
+
+        travel_by_year_month: Dict[int, Dict[int, float]] = {year: defaultdict(float) for year in years}
+        funnel_by_year_month: Dict[int, Dict[int, float]] = {year: defaultdict(float) for year in years}
+
+        for row in travel_rows:
+            period_start = row.get("period_start")
+            if not period_start:
+                continue
+            period_date = self._to_date(period_start)
+            if period_date.year not in travel_by_year_month:
+                continue
+            travel_by_year_month[period_date.year][period_date.month] += self._to_float(
+                row.get("booked_revenue_amount")
+            )
+
+        for row in funnel_rows:
+            period_start = row.get("period_start")
+            if not period_start:
+                continue
+            period_date = self._to_date(period_start)
+            if period_date.year not in funnel_by_year_month:
+                continue
+            funnel_by_year_month[period_date.year][period_date.month] += self._to_float(
+                row.get("booked_revenue_amount")
+            )
+
+        return TravelConsultantThreeYearPerformance(
+            travel_closed_files=self._build_three_year_matrix(
+                key="travel_closed_files",
+                title="Closed Travel Revenue (Travel Date Basis)",
+                metric_label="revenue",
+                years=years,
+                values_by_year_month=travel_by_year_month,
+            ),
+            lead_funnel=self._build_three_year_matrix(
+                key="lead_funnel",
+                title="Lead Funnel Revenue (Created/Booked Basis)",
+                metric_label="revenue",
+                years=years,
+                values_by_year_month=funnel_by_year_month,
+            ),
+        )
+
+    def _build_three_year_matrix(
+        self,
+        key: str,
+        title: str,
+        metric_label: str,
+        years: List[int],
+        values_by_year_month: Dict[int, Dict[int, float]],
+    ) -> TravelConsultantThreeYearMatrix:
+        series: List[TravelConsultantThreeYearSeries] = []
+        for year in years:
+            monthly_values = [
+                round(values_by_year_month.get(year, {}).get(month, 0.0), 2) for month in range(1, 13)
+            ]
+            total = round(sum(monthly_values), 2)
+            series.append(
+                TravelConsultantThreeYearSeries(
+                    year=year,
+                    monthly_values=monthly_values,
+                    total=total,
+                )
+            )
+
+        variances: List[TravelConsultantThreeYearVariance] = []
+        for index in range(1, len(series)):
+            current = series[index]
+            baseline = series[index - 1]
+            monthly_variance_pct = []
+            for month_index in range(12):
+                baseline_value = baseline.monthly_values[month_index]
+                current_value = current.monthly_values[month_index]
+                variance = ((current_value - baseline_value) / baseline_value) if baseline_value else 0.0
+                monthly_variance_pct.append(round(variance, 4))
+            total_variance_pct = (
+                ((current.total - baseline.total) / baseline.total) if baseline.total else 0.0
+            )
+            variances.append(
+                TravelConsultantThreeYearVariance(
+                    label=f"{current.year} vs {baseline.year}",
+                    monthly_variance_pct=monthly_variance_pct,
+                    total_variance_pct=round(total_variance_pct, 4),
+                )
+            )
+
+        return TravelConsultantThreeYearMatrix(
+            key=key,
+            title=title,
+            metric_label=metric_label,
+            series=series,
+            variances=variances,
+        )
+
+    def _map_operational_itinerary(self, row: dict) -> TravelConsultantOperationalItinerary:
+        return TravelConsultantOperationalItinerary(
+            itinerary_id=str(row.get("id") or ""),
+            itinerary_number=str(row.get("itinerary_number") or ""),
+            itinerary_name=str(row.get("itinerary_name") or "") or None,
+            itinerary_status=str(row.get("itinerary_status") or ""),
+            primary_country=str(row.get("primary_country") or "") or None,
+            travel_start_date=self._optional_to_date(row.get("travel_start_date")),
+            travel_end_date=self._optional_to_date(row.get("travel_end_date")),
+            gross_amount=self._to_float(row.get("gross_amount")),
+            pax_count=self._to_int(row.get("pax_count")),
         )
 
     @staticmethod
@@ -721,3 +1007,27 @@ class TravelConsultantsService:
         if isinstance(value, date):
             return value
         return date.fromisoformat(str(value))
+
+    @staticmethod
+    def _optional_to_date(value: object) -> Optional[date]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, date):
+            return value
+        return date.fromisoformat(str(value))
+
+    @staticmethod
+    def _optional_datetime_to_date(value: object) -> Optional[date]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        text = str(value)
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(text).date()
+        except ValueError:
+            return None

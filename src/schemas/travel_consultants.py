@@ -12,7 +12,7 @@ class TravelConsultantLeaderboardFilters(BaseSchema):
     # Keep query parameter names in snake_case for API contract consistency.
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    period_type: str = Field(default="monthly", pattern="^(monthly|rolling12)$")
+    period_type: str = Field(default="monthly", pattern="^(monthly|rolling12|year)$")
     domain: str = Field(default="travel", pattern="^(travel|funnel)$")
     year: Optional[int] = Field(default=None, ge=2000, le=2100)
     month: Optional[int] = Field(default=None, ge=1, le=12)
@@ -28,7 +28,7 @@ class TravelConsultantProfileFilters(BaseSchema):
     # Keep query parameter names in snake_case for API contract consistency.
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    period_type: str = Field(default="rolling12", pattern="^(monthly|rolling12)$")
+    period_type: str = Field(default="rolling12", pattern="^(monthly|rolling12|year)$")
     year: Optional[int] = Field(default=None, ge=2000, le=2100)
     month: Optional[int] = Field(default=None, ge=1, le=12)
     yoy_mode: str = Field(default="same_period", pattern="^(same_period|full_year)$")
@@ -69,9 +69,10 @@ class TravelConsultantLeaderboardRow(BaseSchema):
     closed_lost_count: int
     conversion_rate: float
     close_rate: float
-    median_speed_to_book_days: Optional[float] = None
+    avg_speed_to_book_days: Optional[float] = None
     spend_to_book: Optional[float] = None
     growth_target_variance_pct: float
+    yoy_to_date_variance_pct: float
 
 
 class TravelConsultantHighlight(BaseSchema):
@@ -119,13 +120,38 @@ class TravelConsultantTrendStory(BaseSchema):
     yoy_delta_pct: float
 
 
+class TravelConsultantThreeYearSeries(BaseSchema):
+    year: int
+    monthly_values: List[float]
+    total: float
+
+
+class TravelConsultantThreeYearVariance(BaseSchema):
+    label: str
+    monthly_variance_pct: List[float]
+    total_variance_pct: float
+
+
+class TravelConsultantThreeYearMatrix(BaseSchema):
+    key: str
+    title: str
+    metric_label: str
+    series: List[TravelConsultantThreeYearSeries]
+    variances: List[TravelConsultantThreeYearVariance]
+
+
+class TravelConsultantThreeYearPerformance(BaseSchema):
+    travel_closed_files: TravelConsultantThreeYearMatrix
+    lead_funnel: TravelConsultantThreeYearMatrix
+
+
 class TravelConsultantFunnelHealth(BaseSchema):
     lead_count: int
     closed_won_count: int
     closed_lost_count: int
     conversion_rate: float
     close_rate: float
-    median_speed_to_book_days: Optional[float] = None
+    avg_speed_to_book_days: Optional[float] = None
 
 
 class TravelConsultantForecastPoint(BaseSchema):
@@ -177,14 +203,34 @@ class TravelConsultantComparisonContext(BaseSchema):
     yoy_mode: str
 
 
+class TravelConsultantOperationalItinerary(BaseSchema):
+    itinerary_id: str
+    itinerary_number: str
+    itinerary_name: Optional[str] = None
+    itinerary_status: str
+    primary_country: Optional[str] = None
+    travel_start_date: Optional[date] = None
+    travel_end_date: Optional[date] = None
+    gross_amount: float
+    pax_count: int
+
+
+class TravelConsultantOperationalSnapshot(BaseSchema):
+    current_traveling_files: List[TravelConsultantOperationalItinerary]
+    top_open_itineraries: List[TravelConsultantOperationalItinerary]
+
+
 class TravelConsultantProfileResponse(BaseSchema):
     employee: TravelConsultantIdentity
     section_order: List[str]
     hero_kpis: List[TravelConsultantKpiCard]
     trend_story: TravelConsultantTrendStory
+    three_year_performance: TravelConsultantThreeYearPerformance
+    ytd_variance_pct: float
     funnel_health: TravelConsultantFunnelHealth
     forecast_and_target: TravelConsultantForecastSection
     compensation_impact: TravelConsultantCompensationImpact
+    operational_snapshot: TravelConsultantOperationalSnapshot
     signals: List[TravelConsultantSignal]
     insight_cards: List[TravelConsultantInsightCard]
     comparison_context: TravelConsultantComparisonContext

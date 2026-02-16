@@ -20,7 +20,7 @@ router = APIRouter(prefix="/travel-consultants", tags=["travel-consultants"])
 
 
 def get_travel_consultant_leaderboard_filters(
-    period_type: str = Query(default="monthly", pattern="^(monthly|rolling12)$"),
+    period_type: str = Query(default="monthly", pattern="^(monthly|rolling12|year)$"),
     domain: str = Query(default="travel", pattern="^(travel|funnel)$"),
     year: int | None = Query(default=None, ge=2000, le=2100),
     month: int | None = Query(default=None, ge=1, le=12),
@@ -43,7 +43,7 @@ def get_travel_consultant_leaderboard_filters(
 
 
 def get_travel_consultant_profile_filters(
-    period_type: str = Query(default="rolling12", pattern="^(monthly|rolling12)$"),
+    period_type: str = Query(default="rolling12", pattern="^(monthly|rolling12|year)$"),
     year: int | None = Query(default=None, ge=2000, le=2100),
     month: int | None = Query(default=None, ge=1, le=12),
     yoy_mode: str = Query(default="same_period", pattern="^(same_period|full_year)$"),
