@@ -6,9 +6,11 @@ from src.repositories.fx_repository import FxRepository
 from src.repositories.itinerary_pipeline_repository import ItineraryPipelineRepository
 from src.repositories.itinerary_revenue_repository import ItineraryRevenueRepository
 from src.repositories.revenue_bookings_repository import RevenueBookingsRepository
+from src.repositories.travel_consultants_repository import TravelConsultantsRepository
 from src.services.fx_service import FxService
 from src.services.itinerary_revenue_service import ItineraryRevenueService
 from src.services.revenue_bookings_service import RevenueBookingsService
+from src.services.travel_consultants_service import TravelConsultantsService
 
 
 @lru_cache
@@ -44,3 +46,12 @@ def get_fx_repository() -> FxRepository:
 
 def get_fx_service() -> FxService:
     return FxService(repository=get_fx_repository())
+
+
+@lru_cache
+def get_travel_consultants_repository() -> TravelConsultantsRepository:
+    return TravelConsultantsRepository()
+
+
+def get_travel_consultants_service() -> TravelConsultantsService:
+    return TravelConsultantsService(repository=get_travel_consultants_repository())

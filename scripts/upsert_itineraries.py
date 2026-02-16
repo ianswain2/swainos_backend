@@ -51,7 +51,7 @@ def normalize_date(value: Optional[str]) -> Optional[str]:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).date().isoformat()
     except ValueError:
-        return value
+        return None
 
 
 def normalize_datetime(value: Optional[str]) -> Optional[str]:
@@ -61,7 +61,7 @@ def normalize_datetime(value: Optional[str]) -> Optional[str]:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
     except ValueError:
-        return value
+        return None
 
 
 def normalize_int(value: Optional[str]) -> Optional[int]:
@@ -111,9 +111,12 @@ def chunk_values(values: List[str], size: int) -> Iterable[List[str]]:
         yield values[index : index + size]
 
 
-def collect_external_reference_values(csv_path: str, start_row: int) -> Tuple[Set[str], Set[str]]:
+def collect_external_reference_values(
+    csv_path: str, start_row: int
+) -> Tuple[Set[str], Set[str], Set[str]]:
     agency_external_ids: Set[str] = set()
     contact_external_ids: Set[str] = set()
+    owner_external_ids: Set[str] = set()
 
     with open(csv_path, "r", encoding="utf-8", newline="") as csv_file:
         reader = csv.DictReader(csv_file)
@@ -130,8 +133,11 @@ def collect_external_reference_values(csv_path: str, start_row: int) -> Tuple[Se
                 agency_external_ids.add(agency_external_id)
             if contact_external_id:
                 contact_external_ids.add(contact_external_id)
+            owner_external_id = normalize_text(pick(row, "owner_external_id", "OwnerId"))
+            if owner_external_id:
+                owner_external_ids.add(owner_external_id)
 
-    return agency_external_ids, contact_external_ids
+    return agency_external_ids, contact_external_ids, owner_external_ids
 
 
 def fetch_external_id_map(
@@ -180,6 +186,7 @@ def build_itinerary_payload(
     row: Dict[str, str],
     agency_id_map: Dict[str, str],
     contact_id_map: Dict[str, str],
+    employee_id_map: Dict[str, str],
 ) -> Dict[str, Any]:
     external_id = normalize_text(pick(row, "external_id", "Id"))
     if not external_id:
@@ -189,13 +196,17 @@ def build_itinerary_payload(
     primary_contact_external_id = normalize_text(
         pick(row, "primary_contact_external_id", "KaptioTravel__Primary_Contact__c")
     )
+    owner_external_id = normalize_text(pick(row, "owner_external_id", "OwnerId"))
     agency_id = normalize_uuid(pick(row, "agency_id"))
     primary_contact_id = normalize_uuid(pick(row, "primary_contact_id"))
+    employee_id = normalize_uuid(pick(row, "employee_id"))
 
     if not agency_id and agency_external_id:
         agency_id = agency_id_map.get(agency_external_id)
     if not primary_contact_id and primary_contact_external_id:
         primary_contact_id = contact_id_map.get(primary_contact_external_id)
+    if not employee_id and owner_external_id:
+        employee_id = employee_id_map.get(owner_external_id)
 
     return {
         "external_id": external_id,
@@ -237,6 +248,7 @@ def build_itinerary_payload(
         "primary_contact_id": primary_contact_id,
         "primary_contact_external_id": primary_contact_external_id,
         "primary_contact_type": normalize_text(pick(row, "primary_contact_type")),
+        "employee_id": employee_id,
         "close_date": normalize_date(pick(row, "close_date", "CloseDateOutput__c")),
         "trade_commission_due_date": normalize_date(
             pick(row, "trade_commission_due_date", "Commission_Due_Date__c")
@@ -260,7 +272,7 @@ def build_itinerary_payload(
         "outstanding_balance": normalize_float(
             pick(row, "outstanding_balance", "KaptioTravel__Outstanding__c")
         ),
-        "owner_external_id": normalize_text(pick(row, "owner_external_id", "OwnerId")),
+        "owner_external_id": owner_external_id,
         "lost_date": normalize_date(pick(row, "lost_date", "Lost_Date__c")),
         "lost_comments": normalize_text(pick(row, "lost_comments", "Lost_Reason_Description__c")),
         "created_at": normalize_datetime(pick(row, "created_at", "CreatedDate")),
@@ -299,7 +311,12 @@ def main() -> None:
     parser.add_argument(
         "--skip-fk-resolver",
         action="store_true",
-        help="Skip resolving agency/contact external IDs to UUID foreign keys",
+        help="Skip resolving agency/contact/employee external IDs to UUID foreign keys",
+    )
+    parser.add_argument(
+        "--fail-on-unresolved-employees",
+        action="store_true",
+        help="Fail import when owner_external_id values cannot resolve to employees",
     )
     args = parser.parse_args()
 
@@ -320,8 +337,9 @@ def main() -> None:
 
     agency_id_map: Dict[str, str] = {}
     contact_id_map: Dict[str, str] = {}
+    employee_id_map: Dict[str, str] = {}
     if not args.skip_fk_resolver:
-        agency_external_ids, contact_external_ids = collect_external_reference_values(
+        agency_external_ids, contact_external_ids, owner_external_ids = collect_external_reference_values(
             args.csv_path, args.start_row
         )
         agency_id_map = fetch_external_id_map(
@@ -336,21 +354,41 @@ def main() -> None:
             supabase_url=supabase_url,
             service_role_key=service_role_key,
         )
+        employee_id_map = fetch_external_id_map(
+            table="employees",
+            external_ids=owner_external_ids,
+            supabase_url=supabase_url,
+            service_role_key=service_role_key,
+        )
         unresolved_agencies = len(agency_external_ids - set(agency_id_map.keys()))
         unresolved_contacts = len(contact_external_ids - set(contact_id_map.keys()))
+        unresolved_employees = len(owner_external_ids - set(employee_id_map.keys()))
         print(
             "Resolved foreign keys: "
             f"agencies={len(agency_id_map)}/{len(agency_external_ids)} "
             f"(unresolved={unresolved_agencies}), "
             f"contacts={len(contact_id_map)}/{len(contact_external_ids)} "
-            f"(unresolved={unresolved_contacts})"
+            f"(unresolved={unresolved_contacts}), "
+            f"employees={len(employee_id_map)}/{len(owner_external_ids)} "
+            f"(unresolved={unresolved_employees})"
         )
+        if unresolved_employees > 0:
+            unresolved_owner_ids = sorted(owner_external_ids - set(employee_id_map.keys()))
+            preview = unresolved_owner_ids[:10]
+            print(f"Unresolved owner_external_id sample ({len(preview)}): {preview}")
+            if args.fail_on_unresolved_employees:
+                raise RuntimeError(
+                    f"Cannot resolve {unresolved_employees} owner_external_id values to employees"
+                )
 
     with open(args.csv_path, "r", encoding="utf-8", newline="") as csv_file:
         reader = csv.DictReader(csv_file)
         for _ in range(args.start_row):
             next(reader, None)
-        rows = (build_itinerary_payload(row, agency_id_map, contact_id_map) for row in reader)
+        rows = (
+            build_itinerary_payload(row, agency_id_map, contact_id_map, employee_id_map)
+            for row in reader
+        )
         rows = (row for row in rows if row)
         for index, batch in enumerate(chunk_rows(rows, args.batch_size), start=1):
             post_batch(endpoint, headers, batch)
