@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import re
 from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
@@ -142,7 +143,7 @@ class AiOrchestrationService:
                     "email": ranking.email,
                     "itinerary_count": ranking.itinerary_count,
                     "booked_revenue_amount": ranking.booked_revenue,
-                    "commission_income_amount": ranking.commission_income,
+                    "gross_profit_amount": ranking.gross_profit,
                     "margin_pct": ranking.margin_pct,
                     "lead_count": ranking.lead_count,
                     "closed_won_count": ranking.closed_won_count,
@@ -387,7 +388,8 @@ class AiOrchestrationService:
             operation="daily_briefing",
             system_prompt=(
                 "You are a business command-center analyst. Return compact JSON with keys: "
-                "title, summary, highlights, topActions, confidence."
+                "title, summary, highlights, topActions, confidence. "
+                "Use canonical terminology: Gross Revenue, Gross Profit, Margin Amount, Margin %."
             ),
             user_payload={
                 "domain": "command_center",
@@ -417,10 +419,14 @@ class AiOrchestrationService:
         )
         row = {
             "briefing_date": date.today().isoformat(),
-            "title": str(payload.get("title") or fallback_payload["title"]),
-            "summary": str(payload.get("summary") or fallback_payload["summary"]),
-            "highlights": normalized_highlights,
-            "top_actions": normalized_top_actions,
+            "title": self._normalize_terminology_text(
+                str(payload.get("title") or fallback_payload["title"])
+            ),
+            "summary": self._normalize_terminology_text(
+                str(payload.get("summary") or fallback_payload["summary"])
+            ),
+            "highlights": [self._normalize_terminology_text(item) for item in normalized_highlights],
+            "top_actions": [self._normalize_terminology_text(item) for item in normalized_top_actions],
             "confidence": self._coerce_confidence(
                 payload.get("confidence"),
                 fallback=float(fallback_payload["confidence"]),
@@ -449,7 +455,8 @@ class AiOrchestrationService:
             operation="consultant_coaching",
             system_prompt=(
                 "You are a travel consultant performance coach. Return compact JSON with keys: "
-                "title, summary, recommendedAction, severity, priority, confidence."
+                "title, summary, recommendedAction, severity, priority, confidence. "
+                "Use canonical terminology: Gross Revenue, Gross Profit, Margin Amount, Margin %."
             ),
             user_payload={
                 "domain": "travel_consultant",
@@ -484,6 +491,9 @@ class AiOrchestrationService:
             ),
             consultant_row=consultant_row,
         )
+        title = self._normalize_terminology_text(title)
+        summary = self._normalize_terminology_text(summary)
+        recommended_action = self._normalize_terminology_text(recommended_action)
         severity = str(payload.get("severity") or fallback_payload["severity"])
         if severity not in {"low", "medium", "high", "critical"}:
             severity = "medium"
@@ -1083,4 +1093,27 @@ class AiOrchestrationService:
         if " " in clipped:
             clipped = clipped.rsplit(" ", 1)[0]
         return f"{clipped}..."
+
+    @staticmethod
+    def _normalize_terminology_text(text: str) -> str:
+        normalized = " ".join(str(text).split()).strip()
+        if not normalized:
+            return ""
+
+        patterns = [
+            (r"\bcommission income\b", "gross profit"),
+            (r"\bCommission Income\b", "Gross Profit"),
+            (r"\bcommission-income\b", "gross-profit"),
+            (r"\bCommission-Income\b", "Gross-Profit"),
+            (r"\bgross profit\b", "gross profit"),
+            (r"\bGross profit\b", "Gross Profit"),
+            (r"\bgross revenue\b", "gross revenue"),
+            (r"\bGross revenue\b", "Gross Revenue"),
+            (r"\bmargin amount\b", "margin amount"),
+            (r"\bMargin amount\b", "Margin Amount"),
+        ]
+        for pattern, replacement in patterns:
+            normalized = re.sub(pattern, replacement, normalized)
+        normalized = re.sub(r"\bmargin %\b", "Margin %", normalized)
+        return normalized
 

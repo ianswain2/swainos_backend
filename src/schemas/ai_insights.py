@@ -39,6 +39,7 @@ class AiInsightsFeedFilters(BaseSchema):
     entity_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=25, ge=1, le=100)
+    include_totals: bool = False
 
 
 class AiRecommendationFilters(BaseSchema):
@@ -53,6 +54,7 @@ class AiRecommendationFilters(BaseSchema):
     entity_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=25, ge=1, le=100)
+    include_totals: bool = False
 
 
 class AiInsightsHistoryFilters(BaseSchema):
@@ -65,6 +67,7 @@ class AiInsightsHistoryFilters(BaseSchema):
     date_to: Optional[date] = None
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=50, ge=1, le=200)
+    include_totals: bool = False
 
 
 class AiRecommendationUpdateRequest(BaseSchema):

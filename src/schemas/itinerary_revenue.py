@@ -24,9 +24,9 @@ class ItineraryRevenueOutlookPoint(BaseSchema):
     on_books_gross_amount: float
     potential_gross_amount: float
     expected_gross_amount: float
-    on_books_commission_income_amount: float
-    potential_commission_income_amount: float
-    expected_commission_income_amount: float
+    on_books_gross_profit_amount: float
+    potential_gross_profit_amount: float
+    expected_gross_profit_amount: float
     on_books_pax_count: int
     potential_pax_count: float
     expected_pax_count: float
@@ -34,8 +34,8 @@ class ItineraryRevenueOutlookPoint(BaseSchema):
     expected_margin_pct: float
     forecast_gross_amount: float
     target_gross_amount: float
-    forecast_commission_income_amount: float
-    target_commission_income_amount: float
+    forecast_gross_profit_amount: float
+    target_gross_profit_amount: float
     forecast_pax_count: float
     target_pax_count: float
 
@@ -44,15 +44,15 @@ class ItineraryRevenueOutlookSummary(BaseSchema):
     total_on_books_gross_amount: float
     total_potential_gross_amount: float
     total_expected_gross_amount: float
-    total_expected_commission_income_amount: float
+    total_expected_gross_profit_amount: float
     total_expected_margin_amount: float
     total_on_books_pax_count: int
     total_potential_pax_count: float
     total_expected_pax_count: float
     total_forecast_gross_amount: float
     total_target_gross_amount: float
-    total_forecast_commission_income_amount: float
-    total_target_commission_income_amount: float
+    total_forecast_gross_profit_amount: float
+    total_target_gross_profit_amount: float
     total_forecast_pax_count: float
     total_target_pax_count: float
 
@@ -85,9 +85,9 @@ class ItineraryConversionPoint(BaseSchema):
     confirmed_count: int
     close_ratio: float
     projected_confirmed_count: float
-    projected_commission_income_expected: float
-    projected_commission_income_best_case: float
-    projected_commission_income_worst_case: float
+    projected_gross_profit_expected: float
+    projected_gross_profit_best_case: float
+    projected_gross_profit_worst_case: float
 
 
 class ItineraryConversionResponse(BaseSchema):
@@ -100,7 +100,7 @@ class ItineraryChannelPoint(BaseSchema):
     itinerary_count: int
     pax_count: int
     gross_amount: float
-    commission_income_amount: float
+    gross_profit_amount: float
     margin_amount: float
     trade_commission_amount: float = 0.0
 
@@ -117,14 +117,14 @@ class ItineraryActualsYoyMonthPoint(BaseSchema):
     itinerary_count: int
     pax_count: int
     gross_amount: float
-    commission_income_amount: float
+    gross_profit_amount: float
     margin_amount: float
     trade_commission_amount: float
     margin_pct: float
     avg_gross_per_itinerary: float
-    avg_commission_income_per_itinerary: float
+    avg_gross_profit_per_itinerary: float
     avg_gross_per_pax: float
-    avg_commission_income_per_pax: float
+    avg_gross_profit_per_pax: float
     avg_number_of_days: float
     avg_number_of_nights: float
     gross_share_of_year_pct: float
@@ -136,14 +136,14 @@ class ItineraryActualsYoyYearSummary(BaseSchema):
     itinerary_count: int
     pax_count: int
     gross_amount: float
-    commission_income_amount: float
+    gross_profit_amount: float
     margin_amount: float
     trade_commission_amount: float
     margin_pct: float
     avg_gross_per_itinerary: float
-    avg_commission_income_per_itinerary: float
+    avg_gross_profit_per_itinerary: float
     avg_gross_per_pax: float
-    avg_commission_income_per_pax: float
+    avg_gross_profit_per_pax: float
     avg_number_of_days: float
     avg_number_of_nights: float
 
@@ -157,8 +157,8 @@ class ItineraryTradeDirectMonthPoint(BaseSchema):
     trade_pax_count: int
     direct_gross_amount: float
     trade_gross_amount: float
-    direct_commission_income_amount: float
-    trade_commission_income_amount: float
+    direct_gross_profit_amount: float
+    trade_gross_profit_amount: float
     direct_margin_amount: float
     trade_margin_amount: float
 
@@ -170,8 +170,8 @@ class ItineraryTradeDirectTotals(BaseSchema):
     trade_pax_count: int
     direct_gross_amount: float
     trade_gross_amount: float
-    direct_commission_income_amount: float
-    trade_commission_income_amount: float
+    direct_gross_profit_amount: float
+    trade_gross_profit_amount: float
     direct_margin_amount: float
     trade_margin_amount: float
 

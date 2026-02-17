@@ -68,7 +68,7 @@ class ItineraryRevenueService:
         start_date, end_date = parse_forward_time_window(time_window)
         timeline_rows = self.pipeline_repository.list_stage_trends(start_date, end_date)
         ratio_expected, ratio_best, ratio_worst = self._calculate_close_ratio_scenarios()
-        income_yield = self._calculate_commission_income_yield()
+        gross_profit_yield = self._calculate_gross_profit_yield()
         timeline_by_period: Dict[date, Dict[str, float]] = defaultdict(
             lambda: {
                 "quoted": 0.0,
@@ -107,9 +107,9 @@ class ItineraryRevenueService:
                     confirmed_count=confirmed_count,
                     close_ratio=round(close_ratio, 4),
                     projected_confirmed_count=round(projected_confirmed_count, 2),
-                    projected_commission_income_expected=round(projected_gross_expected * income_yield, 2),
-                    projected_commission_income_best_case=round(projected_gross_best * income_yield, 2),
-                    projected_commission_income_worst_case=round(projected_gross_worst * income_yield, 2),
+                    projected_gross_profit_expected=round(projected_gross_expected * gross_profit_yield, 2),
+                    projected_gross_profit_best_case=round(projected_gross_best * gross_profit_yield, 2),
+                    projected_gross_profit_worst_case=round(projected_gross_worst * gross_profit_yield, 2),
                 )
             )
         return ItineraryConversionResponse(
@@ -149,7 +149,7 @@ class ItineraryRevenueService:
                 "itinerary_count": 0.0,
                 "pax_count": 0.0,
                 "gross_amount": 0.0,
-                "commission_income_amount": 0.0,
+                "gross_profit_amount": 0.0,
                 "margin_amount": 0.0,
                 "trade_commission_amount": 0.0,
                 "days_weighted_sum": 0.0,
@@ -167,9 +167,9 @@ class ItineraryRevenueService:
             itinerary_count = float(row.get("itinerary_count") or 0.0)
             pax_count = float(row.get("pax_count") or 0.0)
             gross_amount = float(row.get("gross_amount") or 0.0)
-            commission_income_amount = float(row.get("commission_income_amount") or 0.0)
+            gross_profit_amount = float(row.get("gross_profit_amount") or 0.0)
             margin_amount = float(
-                row.get("margin_amount") or (gross_amount - commission_income_amount)
+                row.get("margin_amount") or (gross_amount - gross_profit_amount)
             )
             trade_commission_amount = float(row.get("trade_commission_amount") or 0.0)
             avg_number_of_days = float(row.get("avg_number_of_days") or 0.0)
@@ -178,7 +178,7 @@ class ItineraryRevenueService:
             bucket["itinerary_count"] += itinerary_count
             bucket["pax_count"] += pax_count
             bucket["gross_amount"] += gross_amount
-            bucket["commission_income_amount"] += commission_income_amount
+            bucket["gross_profit_amount"] += gross_profit_amount
             bucket["margin_amount"] += margin_amount
             bucket["trade_commission_amount"] += trade_commission_amount
             bucket["days_weighted_sum"] += avg_number_of_days * itinerary_count
@@ -188,7 +188,7 @@ class ItineraryRevenueService:
         month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
         year_totals: Dict[int, Dict[str, float]] = defaultdict(
-            lambda: {"itinerary_count": 0.0, "pax_count": 0.0, "gross_amount": 0.0, "commission_income_amount": 0.0, "margin_amount": 0.0, "trade_commission_amount": 0.0, "days_weighted_sum": 0.0, "nights_weighted_sum": 0.0}
+            lambda: {"itinerary_count": 0.0, "pax_count": 0.0, "gross_amount": 0.0, "gross_profit_amount": 0.0, "margin_amount": 0.0, "trade_commission_amount": 0.0, "days_weighted_sum": 0.0, "nights_weighted_sum": 0.0}
         )
         for year in years:
             for month in range(1, 13):
@@ -197,7 +197,7 @@ class ItineraryRevenueService:
                 totals["itinerary_count"] += values["itinerary_count"]
                 totals["pax_count"] += values["pax_count"]
                 totals["gross_amount"] += values["gross_amount"]
-                totals["commission_income_amount"] += values["commission_income_amount"]
+                totals["gross_profit_amount"] += values["gross_profit_amount"]
                 totals["margin_amount"] += values["margin_amount"]
                 totals["trade_commission_amount"] += values["trade_commission_amount"]
                 totals["days_weighted_sum"] += values["days_weighted_sum"]
@@ -212,16 +212,16 @@ class ItineraryRevenueService:
                 itinerary_count = int(round(values["itinerary_count"]))
                 pax_count = int(round(values["pax_count"]))
                 gross_amount = values["gross_amount"]
-                commission_income_amount = values["commission_income_amount"]
+                gross_profit_amount = values["gross_profit_amount"]
                 margin_amount = values["margin_amount"]
                 margin_pct = (margin_amount / gross_amount) if gross_amount else 0.0
                 avg_gross_per_itinerary = (gross_amount / values["itinerary_count"]) if values["itinerary_count"] else 0.0
-                avg_commission_income_per_itinerary = (
-                    commission_income_amount / values["itinerary_count"]
+                avg_gross_profit_per_itinerary = (
+                    gross_profit_amount / values["itinerary_count"]
                 ) if values["itinerary_count"] else 0.0
                 avg_gross_per_pax = (gross_amount / values["pax_count"]) if values["pax_count"] else 0.0
-                avg_commission_income_per_pax = (
-                    commission_income_amount / values["pax_count"]
+                avg_gross_profit_per_pax = (
+                    gross_profit_amount / values["pax_count"]
                 ) if values["pax_count"] else 0.0
                 avg_number_of_days = (
                     values["days_weighted_sum"] / values["itinerary_count"]
@@ -250,14 +250,14 @@ class ItineraryRevenueService:
                         itinerary_count=itinerary_count,
                         pax_count=pax_count,
                         gross_amount=gross_amount,
-                        commission_income_amount=commission_income_amount,
+                        gross_profit_amount=gross_profit_amount,
                         margin_amount=margin_amount,
                         trade_commission_amount=values["trade_commission_amount"],
                         margin_pct=margin_pct,
                         avg_gross_per_itinerary=avg_gross_per_itinerary,
-                        avg_commission_income_per_itinerary=avg_commission_income_per_itinerary,
+                        avg_gross_profit_per_itinerary=avg_gross_profit_per_itinerary,
                         avg_gross_per_pax=avg_gross_per_pax,
-                        avg_commission_income_per_pax=avg_commission_income_per_pax,
+                        avg_gross_profit_per_pax=avg_gross_profit_per_pax,
                         avg_number_of_days=avg_number_of_days,
                         avg_number_of_nights=avg_number_of_nights,
                         gross_share_of_year_pct=gross_share_of_year_pct,
@@ -269,7 +269,7 @@ class ItineraryRevenueService:
         for year in years:
             totals = year_totals[year]
             gross_amount = totals["gross_amount"]
-            commission_income_amount = totals["commission_income_amount"]
+            gross_profit_amount = totals["gross_profit_amount"]
             margin_amount = totals["margin_amount"]
             margin_pct = (margin_amount / gross_amount) if gross_amount else 0.0
             itinerary_count = int(round(totals["itinerary_count"]))
@@ -280,14 +280,14 @@ class ItineraryRevenueService:
                     itinerary_count=itinerary_count,
                     pax_count=pax_count,
                     gross_amount=gross_amount,
-                    commission_income_amount=commission_income_amount,
+                    gross_profit_amount=gross_profit_amount,
                     margin_amount=margin_amount,
                     trade_commission_amount=totals["trade_commission_amount"],
                     margin_pct=margin_pct,
                     avg_gross_per_itinerary=(gross_amount / totals["itinerary_count"]) if totals["itinerary_count"] else 0.0,
-                    avg_commission_income_per_itinerary=(commission_income_amount / totals["itinerary_count"]) if totals["itinerary_count"] else 0.0,
+                    avg_gross_profit_per_itinerary=(gross_profit_amount / totals["itinerary_count"]) if totals["itinerary_count"] else 0.0,
                     avg_gross_per_pax=(gross_amount / totals["pax_count"]) if totals["pax_count"] else 0.0,
-                    avg_commission_income_per_pax=(commission_income_amount / totals["pax_count"]) if totals["pax_count"] else 0.0,
+                    avg_gross_profit_per_pax=(gross_profit_amount / totals["pax_count"]) if totals["pax_count"] else 0.0,
                     avg_number_of_days=(totals["days_weighted_sum"] / totals["itinerary_count"]) if totals["itinerary_count"] else 0.0,
                     avg_number_of_nights=(totals["nights_weighted_sum"] / totals["itinerary_count"]) if totals["itinerary_count"] else 0.0,
                 )
@@ -340,9 +340,9 @@ class ItineraryRevenueService:
                 "on_books_gross": 0.0,
                 "potential_gross_raw": 0.0,
                 "potential_gross_weighted": 0.0,
-                "on_books_commission_income": 0.0,
-                "potential_commission_income_raw": 0.0,
-                "potential_commission_income_weighted": 0.0,
+                "on_books_gross_profit": 0.0,
+                "potential_gross_profit_raw": 0.0,
+                "potential_gross_profit_weighted": 0.0,
                 "on_books_pax": 0.0,
                 "potential_pax_raw": 0.0,
                 "potential_pax_weighted": 0.0,
@@ -354,18 +354,18 @@ class ItineraryRevenueService:
             bucket = by_period[key]
             bucket_name = str(row.get("pipeline_bucket") or "").lower()
             gross = float(row.get("gross_amount") or 0.0)
-            commission_income = float(row.get("commission_income_amount") or 0.0)
+            gross_profit = float(row.get("gross_profit_amount") or 0.0)
             pax = float(row.get("pax_count") or 0.0)
 
             if bucket_name in {"closed_won"}:
                 bucket["on_books_gross"] += gross
-                bucket["on_books_commission_income"] += commission_income
+                bucket["on_books_gross_profit"] += gross_profit
                 bucket["on_books_pax"] += pax
             elif bucket_name in {"open", "holding"}:
                 bucket["potential_gross_raw"] += gross
                 bucket["potential_gross_weighted"] += gross * close_ratio
-                bucket["potential_commission_income_raw"] += commission_income
-                bucket["potential_commission_income_weighted"] += commission_income * close_ratio
+                bucket["potential_gross_profit_raw"] += gross_profit
+                bucket["potential_gross_profit_weighted"] += gross_profit * close_ratio
                 bucket["potential_pax_raw"] += pax
                 bucket["potential_pax_weighted"] += pax * close_ratio
 
@@ -379,19 +379,19 @@ class ItineraryRevenueService:
         for period_start, period_end in sorted(by_period.keys()):
             values = by_period[(period_start, period_end)]
             expected_gross = values["on_books_gross"] + values["potential_gross_weighted"]
-            expected_commission_income = (
-                values["on_books_commission_income"] + values["potential_commission_income_weighted"]
+            expected_gross_profit = (
+                values["on_books_gross_profit"] + values["potential_gross_profit_weighted"]
             )
-            expected_margin = expected_gross - expected_commission_income
+            expected_margin = expected_gross - expected_gross_profit
             expected_margin_pct = expected_margin / expected_gross if expected_gross else 0.0
             forecast_metrics = historical_model.get(period_start, {})
             forecast_gross = float(forecast_metrics.get("forecast_gross", expected_gross))
             target_gross = float(forecast_metrics.get("target_gross", forecast_gross * 1.12))
-            forecast_commission_income = float(
-                forecast_metrics.get("forecast_commission_income", expected_commission_income)
+            forecast_gross_profit = float(
+                forecast_metrics.get("forecast_gross_profit", expected_gross_profit)
             )
-            target_commission_income = float(
-                forecast_metrics.get("target_commission_income", forecast_commission_income * 1.12)
+            target_gross_profit = float(
+                forecast_metrics.get("target_gross_profit", forecast_gross_profit * 1.12)
             )
             forecast_pax = float(
                 forecast_metrics.get("forecast_pax", values["on_books_pax"] + values["potential_pax_weighted"])
@@ -405,9 +405,9 @@ class ItineraryRevenueService:
                     on_books_gross_amount=values["on_books_gross"],
                     potential_gross_amount=values["potential_gross_raw"],
                     expected_gross_amount=expected_gross,
-                    on_books_commission_income_amount=values["on_books_commission_income"],
-                    potential_commission_income_amount=values["potential_commission_income_raw"],
-                    expected_commission_income_amount=expected_commission_income,
+                    on_books_gross_profit_amount=values["on_books_gross_profit"],
+                    potential_gross_profit_amount=values["potential_gross_profit_raw"],
+                    expected_gross_profit_amount=expected_gross_profit,
                     on_books_pax_count=int(round(values["on_books_pax"])),
                     potential_pax_count=values["potential_pax_raw"],
                     expected_pax_count=values["on_books_pax"] + values["potential_pax_weighted"],
@@ -415,8 +415,8 @@ class ItineraryRevenueService:
                     expected_margin_pct=expected_margin_pct,
                     forecast_gross_amount=forecast_gross,
                     target_gross_amount=target_gross,
-                    forecast_commission_income_amount=forecast_commission_income,
-                    target_commission_income_amount=target_commission_income,
+                    forecast_gross_profit_amount=forecast_gross_profit,
+                    target_gross_profit_amount=target_gross_profit,
                     forecast_pax_count=forecast_pax,
                     target_pax_count=target_pax,
                 )
@@ -430,8 +430,8 @@ class ItineraryRevenueService:
         total_on_books_gross_amount = sum(item.on_books_gross_amount for item in timeline)
         total_potential_gross_amount = sum(item.potential_gross_amount for item in timeline)
         total_expected_gross_amount = sum(item.expected_gross_amount for item in timeline)
-        total_expected_commission_income_amount = sum(
-            item.expected_commission_income_amount for item in timeline
+        total_expected_gross_profit_amount = sum(
+            item.expected_gross_profit_amount for item in timeline
         )
         total_expected_margin_amount = sum(item.expected_margin_amount for item in timeline)
         total_on_books_pax_count = sum(item.on_books_pax_count for item in timeline)
@@ -439,11 +439,11 @@ class ItineraryRevenueService:
         total_expected_pax_count = sum(item.expected_pax_count for item in timeline)
         total_forecast_gross_amount = sum(item.forecast_gross_amount for item in timeline)
         total_target_gross_amount = sum(item.target_gross_amount for item in timeline)
-        total_forecast_commission_income_amount = sum(
-            item.forecast_commission_income_amount for item in timeline
+        total_forecast_gross_profit_amount = sum(
+            item.forecast_gross_profit_amount for item in timeline
         )
-        total_target_commission_income_amount = sum(
-            item.target_commission_income_amount for item in timeline
+        total_target_gross_profit_amount = sum(
+            item.target_gross_profit_amount for item in timeline
         )
         total_forecast_pax_count = sum(item.forecast_pax_count for item in timeline)
         total_target_pax_count = sum(item.target_pax_count for item in timeline)
@@ -451,15 +451,15 @@ class ItineraryRevenueService:
             total_on_books_gross_amount=total_on_books_gross_amount,
             total_potential_gross_amount=total_potential_gross_amount,
             total_expected_gross_amount=total_expected_gross_amount,
-            total_expected_commission_income_amount=total_expected_commission_income_amount,
+            total_expected_gross_profit_amount=total_expected_gross_profit_amount,
             total_expected_margin_amount=total_expected_margin_amount,
             total_on_books_pax_count=total_on_books_pax_count,
             total_potential_pax_count=total_potential_pax_count,
             total_expected_pax_count=total_expected_pax_count,
             total_forecast_gross_amount=total_forecast_gross_amount,
             total_target_gross_amount=total_target_gross_amount,
-            total_forecast_commission_income_amount=total_forecast_commission_income_amount,
-            total_target_commission_income_amount=total_target_commission_income_amount,
+            total_forecast_gross_profit_amount=total_forecast_gross_profit_amount,
+            total_target_gross_profit_amount=total_target_gross_profit_amount,
             total_forecast_pax_count=total_forecast_pax_count,
             total_target_pax_count=total_target_pax_count,
         )
@@ -469,7 +469,7 @@ class ItineraryRevenueService:
         historical_rows: List[dict], close_ratio: float, forecast_periods: List[str]
     ) -> Dict[str, Dict[str, float]]:
         monthly_closed_won: Dict[str, Dict[str, float]] = defaultdict(
-            lambda: {"gross": 0.0, "income": 0.0, "pax": 0.0, "open_income": 0.0}
+            lambda: {"gross": 0.0, "gross_profit": 0.0, "pax": 0.0, "open_gross_profit": 0.0}
         )
         for row in historical_rows:
             period_start = str(row.get("period_start") or "")[:10]
@@ -477,15 +477,15 @@ class ItineraryRevenueService:
                 continue
             bucket = str(row.get("pipeline_bucket") or "").lower()
             gross = float(row.get("gross_amount") or 0.0)
-            income = float(row.get("commission_income_amount") or 0.0)
+            gross_profit = float(row.get("gross_profit_amount") or 0.0)
             pax = float(row.get("pax_count") or 0.0)
             month_bucket = monthly_closed_won[period_start]
             if bucket == "closed_won":
                 month_bucket["gross"] += gross
-                month_bucket["income"] += income
+                month_bucket["gross_profit"] += gross_profit
                 month_bucket["pax"] += pax
             elif bucket in {"open", "holding"}:
-                month_bucket["open_income"] += income
+                month_bucket["open_gross_profit"] += gross_profit
 
         ordered_periods = sorted(monthly_closed_won.keys())
         trailing_periods = ordered_periods[-12:]
@@ -494,8 +494,8 @@ class ItineraryRevenueService:
             if trailing_periods
             else 0.0
         )
-        trailing_income_avg = (
-            sum(monthly_closed_won[period]["income"] for period in trailing_periods) / len(trailing_periods)
+        trailing_gross_profit_avg = (
+            sum(monthly_closed_won[period]["gross_profit"] for period in trailing_periods) / len(trailing_periods)
             if trailing_periods
             else 0.0
         )
@@ -506,11 +506,11 @@ class ItineraryRevenueService:
         )
         historical_close_ratios = []
         for period in trailing_periods:
-            closed_income = monthly_closed_won[period]["income"]
-            open_income = monthly_closed_won[period]["open_income"]
-            denominator = closed_income + open_income
+            closed_gross_profit = monthly_closed_won[period]["gross_profit"]
+            open_gross_profit = monthly_closed_won[period]["open_gross_profit"]
+            denominator = closed_gross_profit + open_gross_profit
             if denominator > 0:
-                historical_close_ratios.append(closed_income / denominator)
+                historical_close_ratios.append(closed_gross_profit / denominator)
         avg_historical_close = (
             sum(historical_close_ratios) / len(historical_close_ratios)
             if historical_close_ratios
@@ -521,12 +521,12 @@ class ItineraryRevenueService:
             close_factor = max(0.8, min(1.2, close_ratio / avg_historical_close))
 
         by_month: Dict[int, Dict[str, List[float]]] = defaultdict(
-            lambda: {"gross": [], "income": [], "pax": []}
+            lambda: {"gross": [], "gross_profit": [], "pax": []}
         )
         for period in ordered_periods[-24:]:
             parsed = date.fromisoformat(period)
             by_month[parsed.month]["gross"].append(monthly_closed_won[period]["gross"])
-            by_month[parsed.month]["income"].append(monthly_closed_won[period]["income"])
+            by_month[parsed.month]["gross_profit"].append(monthly_closed_won[period]["gross_profit"])
             by_month[parsed.month]["pax"].append(monthly_closed_won[period]["pax"])
 
         result: Dict[str, Dict[str, float]] = {}
@@ -535,18 +535,18 @@ class ItineraryRevenueService:
             seasonal_gross = (
                 sum(samples["gross"]) / len(samples["gross"]) if samples["gross"] else trailing_gross_avg
             )
-            seasonal_income = (
-                sum(samples["income"]) / len(samples["income"]) if samples["income"] else trailing_income_avg
+            seasonal_gross_profit = (
+                sum(samples["gross_profit"]) / len(samples["gross_profit"]) if samples["gross_profit"] else trailing_gross_profit_avg
             )
             seasonal_pax = (
                 sum(samples["pax"]) / len(samples["pax"]) if samples["pax"] else trailing_pax_avg
             )
             modeled_gross = (seasonal_gross * 0.7 + trailing_gross_avg * 0.3) * close_factor
-            modeled_income = (seasonal_income * 0.7 + trailing_income_avg * 0.3) * close_factor
+            modeled_gross_profit = (seasonal_gross_profit * 0.7 + trailing_gross_profit_avg * 0.3) * close_factor
             modeled_pax = (seasonal_pax * 0.7 + trailing_pax_avg * 0.3) * close_factor
             result[str(future_month)] = {
                 "forecast_gross": modeled_gross,
-                "forecast_income": modeled_income,
+                "forecast_gross_profit": modeled_gross_profit,
                 "forecast_pax": modeled_pax,
             }
 
@@ -555,7 +555,7 @@ class ItineraryRevenueService:
             period_dt = date.fromisoformat(period)
             target_by_period[period] = {
                 "gross": monthly_closed_won[period]["gross"],
-                "income": monthly_closed_won[period]["income"],
+                "gross_profit": monthly_closed_won[period]["gross_profit"],
                 "pax": monthly_closed_won[period]["pax"],
                 "month": float(period_dt.month),
             }
@@ -565,7 +565,7 @@ class ItineraryRevenueService:
             key = str(month)
             modeled[key] = {
                 "forecast_gross": result[key]["forecast_gross"],
-                "forecast_commission_income": result[key]["forecast_income"],
+                "forecast_gross_profit": result[key]["forecast_gross_profit"],
                 "forecast_pax": result[key]["forecast_pax"],
             }
 
@@ -577,15 +577,15 @@ class ItineraryRevenueService:
             month_model = modeled[str(period_dt.month)]
             mapped[period] = {
                 "forecast_gross": month_model["forecast_gross"],
-                "forecast_commission_income": month_model["forecast_commission_income"],
+                "forecast_gross_profit": month_model["forecast_gross_profit"],
                 "forecast_pax": month_model["forecast_pax"],
                 "target_gross": (
                     last_year["gross"] * 1.12 if last_year and last_year["gross"] > 0 else month_model["forecast_gross"] * 1.12
                 ),
-                "target_commission_income": (
-                    last_year["income"] * 1.12
-                    if last_year and last_year["income"] > 0
-                    else month_model["forecast_commission_income"] * 1.12
+                "target_gross_profit": (
+                    last_year["gross_profit"] * 1.12
+                    if last_year and last_year["gross_profit"] > 0
+                    else month_model["forecast_gross_profit"] * 1.12
                 ),
                 "target_pax": (
                     last_year["pax"] * 1.12 if last_year and last_year["pax"] > 0 else month_model["forecast_pax"] * 1.12
@@ -602,7 +602,7 @@ class ItineraryRevenueService:
             pax_count = int(row.get("pax_count") or 0)
             gross_amount = float(row.get("gross_amount") or 0.0)
             net_amount = float(row.get("net_amount") or 0.0)
-            commission_income_amount = float(row.get("commission_income_amount") or 0.0)
+            gross_profit_amount = float(row.get("gross_profit_amount") or 0.0)
             margin_amount_raw = row.get("margin_amount")
             margin_amount = (
                 float(margin_amount_raw) if margin_amount_raw is not None else (gross_amount - net_amount)
@@ -616,7 +616,7 @@ class ItineraryRevenueService:
                     itinerary_count=itinerary_count,
                     pax_count=pax_count,
                     gross_amount=gross_amount,
-                    commission_income_amount=commission_income_amount,
+                    gross_profit_amount=gross_profit_amount,
                     margin_amount=margin_amount,
                     trade_commission_amount=trade_commission_amount,
                 )
@@ -625,7 +625,7 @@ class ItineraryRevenueService:
             current.itinerary_count += itinerary_count
             current.pax_count += pax_count
             current.gross_amount += gross_amount
-            current.commission_income_amount += commission_income_amount
+            current.gross_profit_amount += gross_profit_amount
             current.margin_amount += margin_amount
             current.trade_commission_amount += trade_commission_amount
         return rollup
@@ -707,15 +707,15 @@ class ItineraryRevenueService:
         worst = min(base, p25)
         return round(base, 4), round(best, 4), round(worst, 4)
 
-    def _calculate_commission_income_yield(self) -> float:
+    def _calculate_gross_profit_yield(self) -> float:
         lookback_start, lookback_end = parse_time_window("12m")
         rows = self.revenue_repository.list_revenue_outlook(lookback_start, lookback_end, "monthly")
         closed_won = [row for row in rows if str(row.get("pipeline_bucket") or "").lower() == "closed_won"]
         gross_total = sum(float(row.get("gross_amount") or 0.0) for row in closed_won)
-        income_total = sum(float(row.get("commission_income_amount") or 0.0) for row in closed_won)
+        gross_profit_total = sum(float(row.get("gross_profit_amount") or 0.0) for row in closed_won)
         if gross_total <= 0:
             return 0.0
-        return max(0.0, min(1.0, income_total / gross_total))
+        return max(0.0, min(1.0, gross_profit_total / gross_total))
 
     @staticmethod
     def _build_trade_vs_direct_breakdown(
@@ -730,8 +730,8 @@ class ItineraryRevenueService:
                 "trade_pax_count": 0.0,
                 "direct_gross_amount": 0.0,
                 "trade_gross_amount": 0.0,
-                "direct_commission_income_amount": 0.0,
-                "trade_commission_income_amount": 0.0,
+                "direct_gross_profit_amount": 0.0,
+                "trade_gross_profit_amount": 0.0,
                 "direct_margin_amount": 0.0,
                 "trade_margin_amount": 0.0,
             }
@@ -766,8 +766,8 @@ class ItineraryRevenueService:
             bucket[f"{category}_itinerary_count"] += float(row.get("itinerary_count") or 0.0)
             bucket[f"{category}_pax_count"] += float(row.get("pax_count") or 0.0)
             bucket[f"{category}_gross_amount"] += float(row.get("gross_amount") or 0.0)
-            bucket[f"{category}_commission_income_amount"] += float(
-                row.get("commission_income_amount") or 0.0
+            bucket[f"{category}_gross_profit_amount"] += float(
+                row.get("gross_profit_amount") or 0.0
             )
             bucket[f"{category}_margin_amount"] += float(row.get("margin_amount") or 0.0)
 
@@ -802,8 +802,8 @@ class ItineraryRevenueService:
                         trade_pax_count=int(round(values["trade_pax_count"])),
                         direct_gross_amount=values["direct_gross_amount"],
                         trade_gross_amount=values["trade_gross_amount"],
-                        direct_commission_income_amount=values["direct_commission_income_amount"],
-                        trade_commission_income_amount=values["trade_commission_income_amount"],
+                        direct_gross_profit_amount=values["direct_gross_profit_amount"],
+                        trade_gross_profit_amount=values["trade_gross_profit_amount"],
                         direct_margin_amount=values["direct_margin_amount"],
                         trade_margin_amount=values["trade_margin_amount"],
                     )
@@ -816,11 +816,11 @@ class ItineraryRevenueService:
             trade_pax_count=sum(point.trade_pax_count for point in timeline),
             direct_gross_amount=sum(point.direct_gross_amount for point in timeline),
             trade_gross_amount=sum(point.trade_gross_amount for point in timeline),
-            direct_commission_income_amount=sum(
-                point.direct_commission_income_amount for point in timeline
+            direct_gross_profit_amount=sum(
+                point.direct_gross_profit_amount for point in timeline
             ),
-            trade_commission_income_amount=sum(
-                point.trade_commission_income_amount for point in timeline
+            trade_gross_profit_amount=sum(
+                point.trade_gross_profit_amount for point in timeline
             ),
             direct_margin_amount=sum(point.direct_margin_amount for point in timeline),
             trade_margin_amount=sum(point.trade_margin_amount for point in timeline),

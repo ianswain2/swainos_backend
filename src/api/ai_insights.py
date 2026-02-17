@@ -34,6 +34,7 @@ def get_feed_filters(
     entity_id: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
+    include_totals: bool = Query(default=False),
 ) -> AiInsightsFeedFilters:
     return AiInsightsFeedFilters(
         domain=domain,
@@ -44,6 +45,7 @@ def get_feed_filters(
         entity_id=entity_id,
         page=page,
         page_size=page_size,
+        include_totals=include_totals,
     )
 
 
@@ -57,6 +59,7 @@ def get_recommendation_filters(
     entity_id: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
+    include_totals: bool = Query(default=False),
 ) -> AiRecommendationFilters:
     return AiRecommendationFilters(
         domain=domain,
@@ -68,6 +71,7 @@ def get_recommendation_filters(
         entity_id=entity_id,
         page=page,
         page_size=page_size,
+        include_totals=include_totals,
     )
 
 
@@ -79,6 +83,7 @@ def get_history_filters(
     date_to: Optional[date] = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
+    include_totals: bool = Query(default=False),
 ) -> AiInsightsHistoryFilters:
     return AiInsightsHistoryFilters(
         domain=domain,
@@ -88,6 +93,7 @@ def get_history_filters(
         date_to=date_to,
         page=page,
         page_size=page_size,
+        include_totals=include_totals,
     )
 
 

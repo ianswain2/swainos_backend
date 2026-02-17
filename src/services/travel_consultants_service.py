@@ -114,7 +114,7 @@ class TravelConsultantsService:
                     itinerary_count=row["itinerary_count"],
                     pax_count=row["pax_count"],
                     booked_revenue=row["booked_revenue"],
-                    commission_income=row["commission_income"],
+                    gross_profit=row["gross_profit"],
                     margin_amount=row["margin_amount"],
                     margin_pct=row["margin_pct"],
                     lead_count=row["lead_count"],
@@ -177,16 +177,35 @@ class TravelConsultantsService:
             end_date=period_end,
             closed_won_status_values=closed_won_status_values,
         )
+        three_year_start = date(period_end.year - 2, 1, 1)
+        three_year_end = date(period_end.year, 12, 31)
+        profile_rows_three_year = self.repository.list_profile_monthly(
+            three_year_start, three_year_end, employee_id
+        )
+        funnel_rows_three_year = self.repository.list_funnel_monthly(
+            three_year_start, three_year_end, employee_id
+        )
+        _, ytd_current_end, ytd_baseline_start, _ = self._resolve_ytd_comparison_windows(period_end.year)
+        ytd_rows = self.repository.list_leaderboard_monthly(
+            ytd_baseline_start, ytd_current_end, employee_id
+        )
+        today = date.today()
+        forecast_start = date(today.year, today.month, 1)
+        forecast_history_start = self._add_months(forecast_start, -24)
+        forecast_history_end = self._month_end(self._add_months(forecast_start, -1))
+        forecast_history_rows = self.repository.list_profile_monthly(
+            forecast_history_start, forecast_history_end, employee_id
+        )
 
         booked_revenue = sum(self._to_float(row.get("booked_revenue_amount")) for row in profile_rows)
-        commission_income = sum(
-            self._to_float(row.get("commission_income_amount")) for row in profile_rows
+        gross_profit = sum(
+            self._to_float(row.get("gross_profit_amount")) for row in profile_rows
         )
         margin_amount = sum(self._to_float(row.get("margin_amount")) for row in profile_rows)
         margin_pct = (margin_amount / booked_revenue) if booked_revenue else 0.0
         itinerary_count = sum(self._to_int(row.get("itinerary_count")) for row in profile_rows)
         pax_count = sum(self._to_int(row.get("pax_count")) for row in profile_rows)
-        avg_gross_profit = (commission_income / itinerary_count) if itinerary_count else 0.0
+        avg_gross_profit = (gross_profit / itinerary_count) if itinerary_count else 0.0
         avg_group_size = (pax_count / itinerary_count) if itinerary_count else 0.0
 
         weighted_nights_total = 0.0
@@ -214,41 +233,47 @@ class TravelConsultantsService:
         ]
         avg_speed_to_book_days = (sum(speed_values) / len(speed_values)) if speed_values else None
 
-        lead_time_samples: List[float] = []
         speed_to_close_samples: List[float] = []
         for itinerary in closed_won_itineraries:
             created_date = self._optional_datetime_to_date(itinerary.get("created_at"))
-            travel_start_date = self._optional_to_date(itinerary.get("travel_start_date"))
             close_date = self._optional_to_date(itinerary.get("close_date"))
-
-            if created_date and travel_start_date:
-                lead_time_days = (travel_start_date - created_date).days
-                if lead_time_days >= 0:
-                    lead_time_samples.append(float(lead_time_days))
 
             if created_date and close_date:
                 speed_to_close_days = (close_date - created_date).days
                 if speed_to_close_days >= 0:
                     speed_to_close_samples.append(float(speed_to_close_days))
-
-        avg_lead_time_days = (
-            sum(lead_time_samples) / len(lead_time_samples) if lead_time_samples else None
-        )
         avg_speed_to_close_days = (
             sum(speed_to_close_samples) / len(speed_to_close_samples) if speed_to_close_samples else None
         )
 
-        trend_story, comparison_context = self._build_trend_story(employee_id, period_end, filters.yoy_mode)
-        ytd_variance_pct = self._calculate_employee_ytd_variance(employee_id, period_end.year)
-        three_year_performance = self._build_three_year_performance(employee_id, period_end.year)
+        trend_story, comparison_context = self._build_trend_story(
+            employee_id,
+            period_end,
+            filters.yoy_mode,
+            preloaded_rows=profile_rows_three_year,
+        )
+        ytd_variance_pct = self._calculate_employee_ytd_variance(
+            employee_id,
+            period_end.year,
+            preloaded_rows=ytd_rows,
+        )
+        three_year_performance = self._build_three_year_performance(
+            employee_id,
+            period_end.year,
+            preloaded_travel_rows=profile_rows_three_year,
+            preloaded_funnel_rows=funnel_rows_three_year,
+        )
         forecast_response = self.get_forecast(
             employee_id=employee_id,
             filters=TravelConsultantForecastFilters(horizon_months=12, currency_code=filters.currency_code),
+            employee=employee,
+            preloaded_history_rows=forecast_history_rows,
         )
         compensation_impact = self._build_compensation_impact(compensation_rows)
         operational_snapshot = self._build_operational_snapshot(employee_id)
         hero_kpis = self._build_hero_kpis(
             booked_revenue=booked_revenue,
+            gross_profit=gross_profit,
             conversion_rate=conversion_rate,
             close_rate=close_rate,
             margin_pct=margin_pct,
@@ -256,7 +281,6 @@ class TravelConsultantsService:
             avg_gross_profit=avg_gross_profit,
             avg_itinerary_nights=avg_itinerary_nights,
             avg_group_size=avg_group_size,
-            avg_lead_time_days=avg_lead_time_days,
             avg_speed_to_close_days=avg_speed_to_close_days,
         )
         funnel_health = TravelConsultantFunnelHealth(
@@ -295,14 +319,21 @@ class TravelConsultantsService:
         )
 
     def get_forecast(
-        self, employee_id: str, filters: TravelConsultantForecastFilters
+        self,
+        employee_id: str,
+        filters: TravelConsultantForecastFilters,
+        *,
+        employee: Optional[TravelConsultantIdentity] = None,
+        preloaded_history_rows: Optional[List[dict]] = None,
     ) -> TravelConsultantForecastResponse:
-        employee = self._get_employee_identity(employee_id)
+        consultant = employee or self._get_employee_identity(employee_id)
         today = date.today()
         forecast_start = date(today.year, today.month, 1)
         history_start = self._add_months(forecast_start, -24)
         history_end = self._month_end(self._add_months(forecast_start, -1))
-        history_rows = self.repository.list_profile_monthly(history_start, history_end, employee_id)
+        history_rows = preloaded_history_rows or self.repository.list_profile_monthly(
+            history_start, history_end, employee_id
+        )
         revenue_by_period = {
             self._to_date(row["period_start"]): self._to_float(row.get("booked_revenue_amount"))
             for row in history_rows
@@ -350,7 +381,7 @@ class TravelConsultantsService:
             total_target_revenue_amount=round(total_target, 2),
             total_growth_gap_pct=round(total_gap_pct, 4),
         )
-        return TravelConsultantForecastResponse(employee=employee, timeline=timeline, summary=summary)
+        return TravelConsultantForecastResponse(employee=consultant, timeline=timeline, summary=summary)
 
     def _get_employee_identity(self, employee_id: str) -> TravelConsultantIdentity:
         employee = self.repository.get_employee(employee_id)
@@ -383,8 +414,8 @@ class TravelConsultantsService:
             bucket["booked_revenue_travel"] = float(bucket["booked_revenue_travel"]) + self._to_float(
                 row.get("booked_revenue_amount")
             )
-            bucket["commission_income"] = float(bucket["commission_income"]) + self._to_float(
-                row.get("commission_income_amount")
+            bucket["gross_profit"] = float(bucket["gross_profit"]) + self._to_float(
+                row.get("gross_profit_amount")
             )
             bucket["margin_amount"] = float(bucket["margin_amount"]) + self._to_float(
                 row.get("margin_amount")
@@ -456,7 +487,7 @@ class TravelConsultantsService:
             "booked_revenue_travel": 0.0,
             "booked_revenue_funnel": 0.0,
             "booked_revenue": 0.0,
-            "commission_income": 0.0,
+            "gross_profit": 0.0,
             "margin_amount": 0.0,
             "lead_count": 0,
             "closed_won_count": 0,
@@ -523,7 +554,11 @@ class TravelConsultantsService:
         ]
 
     def _build_trend_story(
-        self, employee_id: str, period_end: date, yoy_mode: str
+        self,
+        employee_id: str,
+        period_end: date,
+        yoy_mode: str,
+        preloaded_rows: Optional[List[dict]] = None,
     ) -> Tuple[TravelConsultantTrendStory, TravelConsultantComparisonContext]:
         current_year = period_end.year
         baseline_year = current_year - 1
@@ -544,8 +579,16 @@ class TravelConsultantsService:
             )
             month_limit = period_end.month
 
-        current_rows = self.repository.list_profile_monthly(current_start, current_end, employee_id)
-        baseline_rows = self.repository.list_profile_monthly(baseline_start, baseline_end, employee_id)
+        current_rows = (
+            self._filter_rows_for_period(preloaded_rows, current_start, current_end)
+            if preloaded_rows is not None
+            else self.repository.list_profile_monthly(current_start, current_end, employee_id)
+        )
+        baseline_rows = (
+            self._filter_rows_for_period(preloaded_rows, baseline_start, baseline_end)
+            if preloaded_rows is not None
+            else self.repository.list_profile_monthly(baseline_start, baseline_end, employee_id)
+        )
         current_by_month = self._sum_revenue_by_month(current_rows)
         baseline_by_month = self._sum_revenue_by_month(baseline_rows)
         points: List[TravelConsultantTrendStoryPoint] = []
@@ -621,6 +664,7 @@ class TravelConsultantsService:
     @staticmethod
     def _build_hero_kpis(
         booked_revenue: float,
+        gross_profit: float,
         conversion_rate: float,
         close_rate: float,
         margin_pct: float,
@@ -628,7 +672,6 @@ class TravelConsultantsService:
         avg_gross_profit: float,
         avg_itinerary_nights: float,
         avg_group_size: float,
-        avg_lead_time_days: Optional[float],
         avg_speed_to_close_days: Optional[float],
     ) -> List[TravelConsultantKpiCard]:
         trend_direction = "up" if trend_story.yoy_delta_pct >= 0 else "down"
@@ -641,6 +684,15 @@ class TravelConsultantsService:
                 value=round(booked_revenue, 2),
                 trend_direction=trend_direction,
                 trend_strength=trend_strength,
+                is_lagging_indicator=False,
+            ),
+            TravelConsultantKpiCard(
+                key="gross_profit",
+                display_label="Gross Profit",
+                description="Total gross profit from closed-won travel in selected period.",
+                value=round(gross_profit, 2),
+                trend_direction="up" if gross_profit > 0 else "flat",
+                trend_strength="medium",
                 is_lagging_indicator=False,
             ),
             TravelConsultantKpiCard(
@@ -694,15 +746,6 @@ class TravelConsultantsService:
                 description="Average passengers per closed-won itinerary.",
                 value=round(avg_group_size, 1),
                 trend_direction="up" if avg_group_size >= 2 else "flat",
-                trend_strength="low",
-                is_lagging_indicator=False,
-            ),
-            TravelConsultantKpiCard(
-                key="avg_lead_time",
-                display_label="Average Lead Time",
-                description="Average days from lead created to travel start for closed-won itineraries.",
-                value=round(avg_lead_time_days or 0.0, 1),
-                trend_direction="up" if (avg_lead_time_days or 0.0) >= 30 else "down",
                 trend_strength="low",
                 is_lagging_indicator=False,
             ),
@@ -881,24 +924,45 @@ class TravelConsultantsService:
             top_open_itineraries=[self._map_operational_itinerary(row) for row in open_rows],
         )
 
-    def _calculate_employee_ytd_variance(self, employee_id: str, target_year: int) -> float:
+    def _calculate_employee_ytd_variance(
+        self,
+        employee_id: str,
+        target_year: int,
+        preloaded_rows: Optional[List[dict]] = None,
+    ) -> float:
         current_start, current_end, baseline_start, baseline_end = self._resolve_ytd_comparison_windows(
             target_year
         )
-        current_rows = self.repository.list_leaderboard_monthly(current_start, current_end, employee_id)
-        baseline_rows = self.repository.list_leaderboard_monthly(baseline_start, baseline_end, employee_id)
+        current_rows = (
+            self._filter_rows_for_period(preloaded_rows, current_start, current_end)
+            if preloaded_rows is not None
+            else self.repository.list_leaderboard_monthly(current_start, current_end, employee_id)
+        )
+        baseline_rows = (
+            self._filter_rows_for_period(preloaded_rows, baseline_start, baseline_end)
+            if preloaded_rows is not None
+            else self.repository.list_leaderboard_monthly(baseline_start, baseline_end, employee_id)
+        )
         current_total = sum(self._to_float(row.get("booked_revenue_amount")) for row in current_rows)
         baseline_total = sum(self._to_float(row.get("booked_revenue_amount")) for row in baseline_rows)
         return ((current_total - baseline_total) / baseline_total) if baseline_total else 0.0
 
     def _build_three_year_performance(
-        self, employee_id: str, anchor_year: int
+        self,
+        employee_id: str,
+        anchor_year: int,
+        preloaded_travel_rows: Optional[List[dict]] = None,
+        preloaded_funnel_rows: Optional[List[dict]] = None,
     ) -> TravelConsultantThreeYearPerformance:
         years = [anchor_year - 2, anchor_year - 1, anchor_year]
         range_start = date(years[0], 1, 1)
         range_end = date(years[-1], 12, 31)
-        travel_rows = self.repository.list_profile_monthly(range_start, range_end, employee_id)
-        funnel_rows = self.repository.list_funnel_monthly(range_start, range_end, employee_id)
+        travel_rows = preloaded_travel_rows or self.repository.list_profile_monthly(
+            range_start, range_end, employee_id
+        )
+        funnel_rows = preloaded_funnel_rows or self.repository.list_funnel_monthly(
+            range_start, range_end, employee_id
+        )
 
         travel_by_year_month: Dict[int, Dict[int, float]] = {year: defaultdict(float) for year in years}
         funnel_by_year_month: Dict[int, Dict[int, float]] = {year: defaultdict(float) for year in years}
@@ -941,6 +1005,21 @@ class TravelConsultantsService:
                 values_by_year_month=funnel_by_year_month,
             ),
         )
+
+    def _filter_rows_for_period(
+        self, rows: Optional[List[dict]], start_date: date, end_date: date
+    ) -> List[dict]:
+        if not rows:
+            return []
+        filtered_rows: List[dict] = []
+        for row in rows:
+            period_start_raw = row.get("period_start")
+            if not period_start_raw:
+                continue
+            period_start = self._to_date(period_start_raw)
+            if start_date <= period_start <= end_date:
+                filtered_rows.append(row)
+        return filtered_rows
 
     def _build_three_year_matrix(
         self,

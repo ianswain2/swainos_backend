@@ -41,7 +41,7 @@ class AiInsightsRepository:
             limit=filters.page_size,
             offset=offset,
             order="created_at.desc",
-            count=True,
+            count="exact" if filters.include_totals else "planned",
         )
         return rows, total_count or 0
 
@@ -61,7 +61,7 @@ class AiInsightsRepository:
             limit=filters.page_size,
             offset=offset,
             order="created_at.desc",
-            count=True,
+            count="exact" if filters.include_totals else "planned",
         )
         return rows, total_count or 0
 
@@ -81,7 +81,7 @@ class AiInsightsRepository:
             limit=filters.page_size,
             offset=offset,
             order="priority.asc,created_at.desc",
-            count=True,
+            count="exact" if filters.include_totals else "planned",
         )
         return rows, total_count or 0
 

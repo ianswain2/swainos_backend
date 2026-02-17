@@ -61,7 +61,7 @@ class TravelConsultantLeaderboardRow(BaseSchema):
     itinerary_count: int
     pax_count: int
     booked_revenue: float
-    commission_income: float
+    gross_profit: float
     margin_amount: float
     margin_pct: float
     lead_count: int

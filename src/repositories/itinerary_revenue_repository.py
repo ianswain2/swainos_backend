@@ -22,7 +22,7 @@ class ItineraryRevenueRepository:
             table=table,
             select=(
                 "period_start,period_end,pipeline_bucket,pipeline_category,"
-                "itinerary_count,pax_count,gross_amount,commission_income_amount,margin_amount,"
+                "itinerary_count,pax_count,gross_amount,gross_profit_amount,margin_amount,"
                 "commission_amount,trade_commission_amount"
             ),
             filters=[
@@ -53,7 +53,7 @@ class ItineraryRevenueRepository:
         rows, _ = self.client.select(
             table="mv_itinerary_consortia_monthly",
             select=(
-                "consortia,itinerary_count,pax_count,gross_amount,commission_income_amount,margin_amount"
+                "consortia,itinerary_count,pax_count,gross_amount,gross_profit_amount,margin_amount"
             ),
             filters=[
                 ("period_start", f"gte.{start_date.isoformat()}"),
@@ -67,7 +67,7 @@ class ItineraryRevenueRepository:
         rows, _ = self.client.select(
             table="mv_itinerary_trade_agency_monthly",
             select=(
-                "agency_name,itinerary_count,pax_count,gross_amount,commission_income_amount,"
+                "agency_name,itinerary_count,pax_count,gross_amount,gross_profit_amount,"
                 "net_amount,trade_commission_amount"
             ),
             filters=[
@@ -82,9 +82,9 @@ class ItineraryRevenueRepository:
         rows, _ = self.client.select(
             table="mv_itinerary_revenue_monthly",
             select=(
-                "period_start,itinerary_count,pax_count,gross_amount,commission_income_amount,margin_amount,"
-                "trade_commission_amount,margin_pct,avg_gross_per_itinerary,avg_commission_income_per_itinerary,"
-                "avg_gross_per_pax,avg_commission_income_per_pax,avg_number_of_days,avg_number_of_nights"
+                "period_start,itinerary_count,pax_count,gross_amount,gross_profit_amount,margin_amount,"
+                "trade_commission_amount,margin_pct,avg_gross_per_itinerary,avg_gross_profit_per_itinerary,"
+                "avg_gross_per_pax,avg_gross_profit_per_pax,avg_number_of_days,avg_number_of_nights"
             ),
             filters=[
                 ("period_start", f"gte.{start_date.isoformat()}"),
@@ -102,7 +102,7 @@ class ItineraryRevenueRepository:
             table="mv_itinerary_consortia_actuals_monthly",
             select=(
                 "period_start,period_end,consortia,itinerary_count,pax_count,gross_amount,"
-                "commission_income_amount,margin_amount"
+                "gross_profit_amount,margin_amount"
             ),
             filters=[
                 ("period_start", f"gte.{start_date.isoformat()}"),
@@ -118,7 +118,7 @@ class ItineraryRevenueRepository:
         rows, _ = self.client.select(
             table="mv_itinerary_trade_agency_actuals_monthly",
             select=(
-                "agency_name,itinerary_count,pax_count,gross_amount,commission_income_amount,"
+                "agency_name,itinerary_count,pax_count,gross_amount,gross_profit_amount,"
                 "net_amount,trade_commission_amount"
             ),
             filters=[

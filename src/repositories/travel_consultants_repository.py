@@ -53,7 +53,7 @@ class TravelConsultantsRepository:
             table="mv_travel_consultant_leaderboard_monthly",
             select=(
                 "period_start,period_end,employee_id,employee_external_id,first_name,last_name,email,"
-                "itinerary_count,pax_count,booked_revenue_amount,commission_income_amount,"
+                "itinerary_count,pax_count,booked_revenue_amount,gross_profit_amount,"
                 "margin_amount,margin_pct,avg_booking_value_amount"
             ),
             filters=filters,
@@ -73,7 +73,7 @@ class TravelConsultantsRepository:
             table="mv_travel_consultant_profile_monthly",
             select=(
                 "period_start,period_end,employee_id,employee_external_id,first_name,last_name,email,"
-                "itinerary_count,pax_count,booked_revenue_amount,net_amount,commission_income_amount,"
+                "itinerary_count,pax_count,booked_revenue_amount,net_amount,gross_profit_amount,"
                 "margin_amount,margin_pct,avg_number_of_days,avg_number_of_nights"
             ),
             filters=filters,
@@ -112,7 +112,7 @@ class TravelConsultantsRepository:
             table="mv_travel_consultant_compensation_monthly",
             select=(
                 "period_start,period_end,employee_id,employee_external_id,first_name,last_name,email,"
-                "salary_annual_amount,salary_monthly_amount,commission_rate,commission_income_amount,"
+                "salary_annual_amount,salary_monthly_amount,commission_rate,gross_profit_amount,"
                 "estimated_commission_amount,estimated_total_pay_amount"
             ),
             filters=filters,
@@ -174,7 +174,13 @@ class TravelConsultantsRepository:
     ) -> List[Dict[str, Any]]:
         if not open_status_values:
             return []
-        filters: List[Tuple[str, str]] = [("employee_id", f"eq.{employee_id}")]
+        status_filter = self._build_in_filter(open_status_values)
+        if not status_filter:
+            return []
+        filters: List[Tuple[str, str]] = [
+            ("employee_id", f"eq.{employee_id}"),
+            ("itinerary_status", status_filter),
+        ]
         rows, _ = self.client.select(
             table="itineraries",
             select=(
@@ -182,18 +188,10 @@ class TravelConsultantsRepository:
                 "travel_start_date,travel_end_date,gross_amount,pax_count,close_date,created_at"
             ),
             filters=filters,
-            # Pull a bounded but complete employee set then filter in Python so status values with
-            # spaces/slashes don't rely on brittle PostgREST in.(...) encoding semantics.
-            # Using MAX_QUERY_ROWS avoids missing legitimate open itineraries that are outside the
-            # top-N gross candidate window.
-            limit=MAX_QUERY_ROWS,
+            limit=limit,
             order="gross_amount.desc.nullslast",
         )
-        open_status_set = {value.strip() for value in open_status_values if value.strip()}
-        filtered_rows = [
-            row for row in rows if str(row.get("itinerary_status") or "").strip() in open_status_set
-        ]
-        return filtered_rows[:limit]
+        return rows[:limit]
 
     def list_closed_won_itineraries_by_travel_period(
         self,
@@ -207,6 +205,9 @@ class TravelConsultantsRepository:
             ("travel_end_date", f"gte.{start_date.isoformat()}"),
             ("travel_end_date", f"lte.{end_date.isoformat()}"),
         ]
+        status_filter = self._build_in_filter(closed_won_status_values)
+        if status_filter:
+            filters.append(("itinerary_status", status_filter))
         rows, _ = self.client.select(
             table="itineraries",
             select=(
@@ -217,12 +218,7 @@ class TravelConsultantsRepository:
             limit=MAX_QUERY_ROWS,
             order="travel_end_date.asc",
         )
-        closed_won_status_set = {value.strip() for value in closed_won_status_values if value.strip()}
-        return [
-            row
-            for row in rows
-            if str(row.get("itinerary_status") or "").strip() in closed_won_status_set
-        ]
+        return rows
 
     @staticmethod
     def _build_period_filters(
@@ -235,3 +231,11 @@ class TravelConsultantsRepository:
         if employee_id:
             filters.append(("employee_id", f"eq.{employee_id}"))
         return filters
+
+    @staticmethod
+    def _build_in_filter(values: List[str]) -> Optional[str]:
+        sanitized_values = [value.strip() for value in values if value and value.strip()]
+        if not sanitized_values:
+            return None
+        escaped_values = [f"\"{value.replace('\"', '\\\"')}\"" for value in sanitized_values]
+        return f"in.({','.join(escaped_values)})"

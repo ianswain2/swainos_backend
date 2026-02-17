@@ -13,6 +13,9 @@ from src.api.itinerary_lead_flow import router as itinerary_lead_flow_router
 from src.api.itinerary_trends import router as itinerary_trends_router
 from src.api.payments_out import router as payments_out_router
 from src.api.travel_consultants import router as travel_consultants_router
+from src.api.travel_agents import router as travel_agents_router
+from src.api.travel_agencies import router as travel_agencies_router
+from src.api.travel_trade_search import router as travel_trade_search_router
 
 
 api_router = APIRouter()
@@ -26,4 +29,7 @@ api_router.include_router(itinerary_lead_flow_router)
 api_router.include_router(itinerary_revenue_router)
 api_router.include_router(fx_router)
 api_router.include_router(travel_consultants_router)
+api_router.include_router(travel_agents_router)
+api_router.include_router(travel_agencies_router)
+api_router.include_router(travel_trade_search_router)
 api_router.include_router(ai_insights_router)
