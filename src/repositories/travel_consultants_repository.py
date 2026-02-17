@@ -16,7 +16,7 @@ class TravelConsultantsRepository:
         rows, _ = self.client.select(
             table="employees",
             select="id,external_id,first_name,last_name,email",
-            filters=[("id", f"eq.{employee_id}")],
+            filters=[("id", f"eq.{employee_id}"), ("analysis_disabled", "eq.false")],
             limit=1,
         )
         return rows[0] if rows else None
@@ -33,7 +33,7 @@ class TravelConsultantsRepository:
             rows, _ = self.client.select(
                 table="employees",
                 select="id",
-                filters=[("id", f"in.({in_filter})")],
+                filters=[("id", f"in.({in_filter})"), ("analysis_disabled", "eq.false")],
                 limit=len(chunk),
             )
             for row in rows:

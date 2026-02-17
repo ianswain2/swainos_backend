@@ -74,7 +74,7 @@ def refresh_rollups_if_requested(should_refresh: bool) -> None:
         details = exc.read().decode("utf-8")
         raise RuntimeError(
             f"Failed to refresh rollups before generation: HTTP {exc.code} {details}. "
-            "Ensure refresh-rollup migrations (0043/0045) have been applied."
+            "Ensure refresh-rollup migrations (0043/0045/0046) have been applied."
         ) from exc
 
 

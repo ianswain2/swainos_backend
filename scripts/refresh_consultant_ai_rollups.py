@@ -34,7 +34,7 @@ def call_refresh_rpc(base_url: str, api_key: str) -> dict:
         details = exc.read().decode("utf-8")
         raise RuntimeError(
             f"Failed refreshing rollups: HTTP {exc.code} {details}. "
-            "Ensure refresh-rollup migrations (0043/0045) have been applied."
+            "Ensure refresh-rollup migrations (0043/0045/0046) have been applied."
         ) from exc
 
     if not payload:
@@ -47,7 +47,7 @@ def call_refresh_rpc(base_url: str, api_key: str) -> dict:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Refresh travel consultant and AI context materialized views."
+        description="Refresh itinerary, travel consultant, and AI context materialized views."
     )
     parser.add_argument(
         "--env-file",
