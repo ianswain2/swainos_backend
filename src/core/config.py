@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     )
     supabase_anon_key: Optional[str] = Field(default=None, alias="SUPABASE_ANON_KEY")
 
+    openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
+    openai_model_decision: str = Field(default="gpt-5.2", alias="OPENAI_MODEL_DECISION")
+    openai_model_support: str = Field(default="gpt-5-mini", alias="OPENAI_MODEL_SUPPORT")
+    openai_max_retries: int = Field(default=2, alias="OPENAI_MAX_RETRIES")
+    openai_timeout_seconds: float = Field(default=60.0, alias="OPENAI_TIMEOUT_SECONDS")
+
+    ai_generation_enabled: bool = Field(default=True, alias="AI_GENERATION_ENABLED")
+    ai_allow_support_for_decision: bool = Field(default=False, alias="AI_ALLOW_SUPPORT_FOR_DECISION")
+    ai_max_consultants_per_run: int = Field(default=25, alias="AI_MAX_CONSULTANTS_PER_RUN")
+    ai_manual_run_token: Optional[str] = Field(default=None, alias="AI_MANUAL_RUN_TOKEN")
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -66,12 +66,20 @@ class TravelConsultantsService:
         travel_rows = self.repository.list_leaderboard_monthly(period_start, period_end)
         funnel_rows = self.repository.list_funnel_monthly(period_start, period_end)
         baseline_rows = self.repository.list_leaderboard_monthly(baseline_start, baseline_end)
+        valid_employee_ids = self.repository.list_existing_employee_ids(
+            self._collect_employee_ids(travel_rows, funnel_rows, baseline_rows)
+        )
+        travel_rows = self._filter_rows_by_employee_ids(travel_rows, valid_employee_ids)
+        funnel_rows = self._filter_rows_by_employee_ids(funnel_rows, valid_employee_ids)
+        baseline_rows = self._filter_rows_by_employee_ids(baseline_rows, valid_employee_ids)
         baseline_revenue_by_employee = self._sum_baseline_revenue_by_employee(baseline_rows)
         ytd_current_start, ytd_current_end, ytd_baseline_start, ytd_baseline_end = (
             self._resolve_ytd_comparison_windows(filters.year)
         )
         ytd_current_rows = self.repository.list_leaderboard_monthly(ytd_current_start, ytd_current_end)
         ytd_baseline_rows = self.repository.list_leaderboard_monthly(ytd_baseline_start, ytd_baseline_end)
+        ytd_current_rows = self._filter_rows_by_employee_ids(ytd_current_rows, valid_employee_ids)
+        ytd_baseline_rows = self._filter_rows_by_employee_ids(ytd_baseline_rows, valid_employee_ids)
         ytd_current_revenue_by_employee = self._sum_baseline_revenue_by_employee(ytd_current_rows)
         ytd_baseline_revenue_by_employee = self._sum_baseline_revenue_by_employee(ytd_baseline_rows)
 
@@ -131,6 +139,26 @@ class TravelConsultantsService:
             rankings=ranked_rows,
             highlights=highlights,
         )
+
+    @staticmethod
+    def _collect_employee_ids(*row_sets: List[dict]) -> List[str]:
+        employee_ids: List[str] = []
+        for rows in row_sets:
+            for row in rows:
+                employee_id = str(row.get("employee_id") or "")
+                if employee_id:
+                    employee_ids.append(employee_id)
+        return employee_ids
+
+    @staticmethod
+    def _filter_rows_by_employee_ids(rows: List[dict], valid_employee_ids: set[str]) -> List[dict]:
+        if not valid_employee_ids:
+            return []
+        return [
+            row
+            for row in rows
+            if str(row.get("employee_id") or "") in valid_employee_ids
+        ]
 
     def get_profile(
         self, employee_id: str, filters: TravelConsultantProfileFilters

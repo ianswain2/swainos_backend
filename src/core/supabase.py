@@ -52,3 +52,62 @@ class SupabaseClient:
             if "/" in content_range:
                 total_count = int(content_range.split("/")[-1])
         return response.json(), total_count
+
+    def insert(
+        self,
+        table: str,
+        payload: Dict[str, Any] | List[Dict[str, Any]],
+        upsert: bool = False,
+        on_conflict: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        params: List[Tuple[str, str]] = []
+        if on_conflict:
+            params.append(("on_conflict", on_conflict))
+        url = f"{self.base_url}/{table}"
+        if params:
+            url = f"{url}?{urlencode(params, doseq=True)}"
+        headers = {
+            "apikey": self.api_key,
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+        if upsert:
+            headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+        response = httpx.post(url, headers=headers, json=payload, timeout=30.0)
+        response.raise_for_status()
+        if not response.content:
+            return []
+        data = response.json()
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return [data]
+        return []
+
+    def update(
+        self,
+        table: str,
+        payload: Dict[str, Any],
+        filters: List[Tuple[str, str]],
+    ) -> List[Dict[str, Any]]:
+        params: List[Tuple[str, str]] = []
+        if filters:
+            params.extend(filters)
+        url = f"{self.base_url}/{table}?{urlencode(params, doseq=True)}"
+        headers = {
+            "apikey": self.api_key,
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+        response = httpx.patch(url, headers=headers, json=payload, timeout=30.0)
+        response.raise_for_status()
+        if not response.content:
+            return []
+        data = response.json()
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return [data]
+        return []

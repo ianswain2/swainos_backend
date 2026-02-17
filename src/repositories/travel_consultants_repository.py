@@ -21,6 +21,27 @@ class TravelConsultantsRepository:
         )
         return rows[0] if rows else None
 
+    def list_existing_employee_ids(self, employee_ids: List[str]) -> set[str]:
+        normalized_ids = sorted({employee_id for employee_id in employee_ids if employee_id})
+        if not normalized_ids:
+            return set()
+        existing_ids: set[str] = set()
+        chunk_size = 100
+        for start in range(0, len(normalized_ids), chunk_size):
+            chunk = normalized_ids[start : start + chunk_size]
+            in_filter = ",".join(chunk)
+            rows, _ = self.client.select(
+                table="employees",
+                select="id",
+                filters=[("id", f"in.({in_filter})")],
+                limit=len(chunk),
+            )
+            for row in rows:
+                employee_id = row.get("id")
+                if employee_id:
+                    existing_ids.add(str(employee_id))
+        return existing_ids
+
     def list_leaderboard_monthly(
         self,
         start_date: date,
@@ -161,9 +182,11 @@ class TravelConsultantsRepository:
                 "travel_start_date,travel_end_date,gross_amount,pax_count,close_date,created_at"
             ),
             filters=filters,
-            # Pull a bounded candidate set then filter in Python so status values with spaces/slashes
-            # don't rely on brittle PostgREST in.(...) encoding semantics.
-            limit=max(limit * 20, 50),
+            # Pull a bounded but complete employee set then filter in Python so status values with
+            # spaces/slashes don't rely on brittle PostgREST in.(...) encoding semantics.
+            # Using MAX_QUERY_ROWS avoids missing legitimate open itineraries that are outside the
+            # top-N gross candidate window.
+            limit=MAX_QUERY_ROWS,
             order="gross_amount.desc.nullslast",
         )
         open_status_set = {value.strip() for value in open_status_values if value.strip()}

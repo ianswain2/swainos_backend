@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from src.api.booking_forecasts import router as booking_forecasts_router
+from src.api.ai_insights import router as ai_insights_router
 from src.api.cash_flow import router as cash_flow_router
 from src.api.deposits import router as deposits_router
 from src.api.fx import router as fx_router
@@ -25,3 +26,4 @@ api_router.include_router(itinerary_lead_flow_router)
 api_router.include_router(itinerary_revenue_router)
 api_router.include_router(fx_router)
 api_router.include_router(travel_consultants_router)
+api_router.include_router(ai_insights_router)
