@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Dict, Optional
 
 import httpx
@@ -77,7 +78,10 @@ class OpenAiInsightsService:
                                 {"role": "system", "content": system_prompt},
                                 {
                                     "role": "user",
-                                    "content": json.dumps(user_payload, separators=(",", ":")),
+                                    "content": json.dumps(
+                                        self._to_json_compatible(user_payload),
+                                        separators=(",", ":"),
+                                    ),
                                 },
                             ],
                         },
@@ -167,4 +171,16 @@ class OpenAiInsightsService:
         if not isinstance(content, str):
             raise ValueError("Model response content missing")
         return content
+
+    @staticmethod
+    def _to_json_compatible(value: Any) -> Any:
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, dict):
+            return {k: OpenAiInsightsService._to_json_compatible(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [OpenAiInsightsService._to_json_compatible(item) for item in value]
+        if isinstance(value, tuple):
+            return [OpenAiInsightsService._to_json_compatible(item) for item in value]
+        return value
 

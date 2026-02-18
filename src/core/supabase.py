@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
@@ -20,6 +21,19 @@ class SupabaseClient:
         if not self.api_key:
             raise ValueError("Supabase API key is required")
         self._client = self._get_shared_client()
+
+    @staticmethod
+    def _to_json_compatible(value: Any) -> Any:
+        if isinstance(value, Decimal):
+            # Preserve precision for Postgres numeric columns.
+            return str(value)
+        if isinstance(value, dict):
+            return {k: SupabaseClient._to_json_compatible(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [SupabaseClient._to_json_compatible(item) for item in value]
+        if isinstance(value, tuple):
+            return [SupabaseClient._to_json_compatible(item) for item in value]
+        return value
 
     @classmethod
     def _get_shared_client(cls) -> httpx.Client:
@@ -94,7 +108,7 @@ class SupabaseClient:
         }
         if upsert:
             headers["Prefer"] = "resolution=merge-duplicates,return=representation"
-        response = self._client.post(url, headers=headers, json=payload)
+        response = self._client.post(url, headers=headers, json=self._to_json_compatible(payload))
         response.raise_for_status()
         if not response.content:
             return []
@@ -121,7 +135,7 @@ class SupabaseClient:
             "Content-Type": "application/json",
             "Prefer": "return=representation",
         }
-        response = self._client.patch(url, headers=headers, json=payload)
+        response = self._client.patch(url, headers=headers, json=self._to_json_compatible(payload))
         response.raise_for_status()
         if not response.content:
             return []
@@ -131,3 +145,27 @@ class SupabaseClient:
         if isinstance(data, dict):
             return [data]
         return []
+
+    def rpc(
+        self,
+        function_name: str,
+        payload: Optional[Dict[str, Any]] = None,
+        timeout_seconds: Optional[float] = None,
+    ) -> Any:
+        url = f"{self.base_url}/rpc/{function_name}"
+        headers = {
+            "apikey": self.api_key,
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        response = self._client.post(
+            url,
+            headers=headers,
+            json=self._to_json_compatible(payload or {}),
+            timeout=timeout_seconds if timeout_seconds is not None else 30.0,
+        )
+        response.raise_for_status()
+        if not response.content:
+            return None
+        return response.json()

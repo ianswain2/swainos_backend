@@ -22,13 +22,28 @@ All endpoints are under `api_prefix` (default `/api/v1`):
 - `GET /booking-forecasts`
 - `GET /itinerary-trends`
 - `GET /itinerary-lead-flow`
-- `GET /itinerary-revenue/outlook`
-- `GET /itinerary-revenue/deposits`
-- `GET /itinerary-revenue/conversion`
-- `GET /itinerary-revenue/channels`
-- `GET /itinerary-revenue/actuals-yoy`
-- `GET /itinerary-revenue/actuals-channels`
-- `GET /fx/rates`, `GET /fx/exposure`
+- `GET /itinerary-revenue/outlook`, `GET /itinerary-revenue/deposits`
+- `GET /itinerary-revenue/conversion`, `GET /itinerary-revenue/channels`
+- `GET /itinerary-revenue/actuals-yoy`, `GET /itinerary-revenue/actuals-channels`
+- `GET /fx/rates`, `POST /fx/rates/run`
+- `GET /fx/exposure`
+- `GET /fx/signals`, `POST /fx/signals/run`
+- `GET /fx/transactions`, `POST /fx/transactions`
+- `GET /fx/holdings`
+- `GET /fx/intelligence`, `POST /fx/intelligence/run`
+- `GET /fx/invoice-pressure`
+- `GET /travel-consultants/leaderboard`
+- `GET /travel-consultants/{employee_id}/profile`
+- `GET /travel-consultants/{employee_id}/forecast`
+- `GET /travel-agents/leaderboard`, `GET /travel-agents/{agent_id}/profile`
+- `GET /travel-agencies/leaderboard`, `GET /travel-agencies/{agency_id}/profile`
+- `GET /travel-trade/search`
+- `GET /ai-insights/briefing`
+- `GET /ai-insights/feed`, `GET /ai-insights/recommendations`
+- `PATCH /ai-insights/recommendations/{recommendation_id}`
+- `GET /ai-insights/history`
+- `GET /ai-insights/entities/{entity_type}/{entity_id}`
+- `POST /ai-insights/run`
 
 ## Configuration
 Environment is loaded from `.env` via `src/core/config.py`.
@@ -43,6 +58,11 @@ Optional:
 - `CORS_ALLOW_ORIGINS` (defaults to localhost frontend origins)
 - `APP_NAME`
 - `ENVIRONMENT`
+- `FX_MANUAL_RUN_TOKEN` (required to enable manual FX run endpoints)
+- `FX_BASE_CURRENCY`, `FX_TARGET_CURRENCIES`
+- `FX_PRIMARY_PROVIDER`, `FX_PRIMARY_API_KEY`, `FX_PRIMARY_BASE_URL`
+- `FX_INTELLIGENCE_ON_DEMAND_ENABLED`
+- `FX_STALE_AFTER_MINUTES`, `FX_PULL_INTERVAL_MINUTES`
 
 ## Local Development
 1. Create `.env` in repo root and set at least `SUPABASE_URL`.

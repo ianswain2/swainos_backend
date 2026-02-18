@@ -22,6 +22,10 @@ class Meta(BaseSchema):
     time_window: str
     calculation_version: str
     currency: Optional[str] = None
+    data_status: Optional[str] = None
+    is_stale: Optional[bool] = None
+    degraded: Optional[bool] = None
+    generated_at: Optional[str] = None
 
 
 class ResponseEnvelope(BaseSchema, Generic[T]):

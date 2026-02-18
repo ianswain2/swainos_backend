@@ -12,6 +12,7 @@ from src.repositories.travel_agents_repository import TravelAgentsRepository
 from src.repositories.travel_agencies_repository import TravelAgenciesRepository
 from src.repositories.travel_trade_search_repository import TravelTradeSearchRepository
 from src.services.fx_service import FxService
+from src.services.fx_intelligence_service import FxIntelligenceService
 from src.services.ai_insights_service import AiInsightsService
 from src.services.ai_orchestration_service import AiOrchestrationService
 from src.services.itinerary_revenue_service import ItineraryRevenueService
@@ -56,6 +57,13 @@ def get_fx_repository() -> FxRepository:
 
 def get_fx_service() -> FxService:
     return FxService(repository=get_fx_repository())
+
+
+def get_fx_intelligence_service() -> FxIntelligenceService:
+    return FxIntelligenceService(
+        repository=get_fx_repository(),
+        openai_service=get_openai_insights_service(),
+    )
 
 
 @lru_cache
