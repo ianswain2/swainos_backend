@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.concurrency import run_in_threadpool
 
 from src.api.dependencies import get_itinerary_revenue_service
 from src.schemas.itinerary_revenue import (
@@ -37,11 +38,11 @@ def get_itinerary_revenue_filters(
 
 
 @router.get("/outlook")
-def itinerary_revenue_outlook(
+async def itinerary_revenue_outlook(
     filters: ItineraryRevenueFilters = Depends(get_itinerary_revenue_filters),
     service: ItineraryRevenueService = Depends(get_itinerary_revenue_service),
 ) -> ResponseEnvelope[ItineraryRevenueOutlookResponse]:
-    data = service.get_outlook(filters.time_window, filters.grain)
+    data = await run_in_threadpool(service.get_outlook, filters.time_window, filters.grain)
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="mv_itinerary_revenue_monthly,mv_itinerary_revenue_weekly,mv_itinerary_pipeline_stages",
@@ -53,11 +54,11 @@ def itinerary_revenue_outlook(
 
 
 @router.get("/deposits")
-def itinerary_revenue_deposits(
+async def itinerary_revenue_deposits(
     filters: ItineraryRevenueFilters = Depends(get_itinerary_revenue_filters),
     service: ItineraryRevenueService = Depends(get_itinerary_revenue_service),
 ) -> ResponseEnvelope[ItineraryDepositsResponse]:
-    data = service.get_deposits(filters.time_window)
+    data = await run_in_threadpool(service.get_deposits, filters.time_window)
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="mv_itinerary_deposit_monthly",
@@ -69,11 +70,11 @@ def itinerary_revenue_deposits(
 
 
 @router.get("/conversion")
-def itinerary_revenue_conversion(
+async def itinerary_revenue_conversion(
     filters: ItineraryRevenueFilters = Depends(get_itinerary_revenue_filters),
     service: ItineraryRevenueService = Depends(get_itinerary_revenue_service),
 ) -> ResponseEnvelope[ItineraryConversionResponse]:
-    data = service.get_conversion(filters.time_window, filters.grain)
+    data = await run_in_threadpool(service.get_conversion, filters.time_window, filters.grain)
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="mv_itinerary_pipeline_stages",
@@ -85,11 +86,11 @@ def itinerary_revenue_conversion(
 
 
 @router.get("/channels")
-def itinerary_revenue_channels(
+async def itinerary_revenue_channels(
     filters: ItineraryRevenueFilters = Depends(get_itinerary_revenue_filters),
     service: ItineraryRevenueService = Depends(get_itinerary_revenue_service),
 ) -> ResponseEnvelope[ItineraryChannelsResponse]:
-    data = service.get_channels(filters.time_window)
+    data = await run_in_threadpool(service.get_channels, filters.time_window)
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="mv_itinerary_consortia_monthly,mv_itinerary_trade_agency_monthly",
@@ -101,11 +102,11 @@ def itinerary_revenue_channels(
 
 
 @router.get("/actuals-yoy")
-def itinerary_revenue_actuals_yoy(
+async def itinerary_revenue_actuals_yoy(
     filters: ItineraryRevenueFilters = Depends(get_itinerary_revenue_filters),
     service: ItineraryRevenueService = Depends(get_itinerary_revenue_service),
 ) -> ResponseEnvelope[ItineraryActualsYoyResponse]:
-    data = service.get_actuals_yoy(filters.years_back)
+    data = await run_in_threadpool(service.get_actuals_yoy, filters.years_back)
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="mv_itinerary_revenue_monthly,mv_itinerary_consortia_actuals_monthly",
@@ -117,11 +118,13 @@ def itinerary_revenue_actuals_yoy(
 
 
 @router.get("/actuals-channels")
-def itinerary_revenue_actuals_channels(
+async def itinerary_revenue_actuals_channels(
     filters: ItineraryRevenueFilters = Depends(get_itinerary_revenue_filters),
     service: ItineraryRevenueService = Depends(get_itinerary_revenue_service),
 ) -> ResponseEnvelope[ItineraryChannelsResponse]:
-    data = service.get_actuals_channels(filters.years_back, filters.actuals_year)
+    data = await run_in_threadpool(
+        service.get_actuals_channels, filters.years_back, filters.actuals_year
+    )
     if filters.actuals_year is not None:
         time_window = f"{filters.actuals_year}"
     else:

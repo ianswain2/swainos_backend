@@ -24,9 +24,15 @@ from src.schemas.travel_consultants import (
     TravelConsultantLeaderboardFilters,
     TravelConsultantLeaderboardResponse,
     TravelConsultantLeaderboardRow,
+    TravelConsultantOperationalItinerary,
+    TravelConsultantOperationalSnapshot,
     TravelConsultantProfileFilters,
     TravelConsultantProfileResponse,
     TravelConsultantSignal,
+    TravelConsultantThreeYearMatrix,
+    TravelConsultantThreeYearPerformance,
+    TravelConsultantThreeYearSeries,
+    TravelConsultantThreeYearVariance,
     TravelConsultantTrendStory,
     TravelConsultantTrendStoryPoint,
 )
@@ -54,7 +60,7 @@ class FakeTravelConsultantsService:
                     itinerary_count=10,
                     pax_count=24,
                     booked_revenue=120000.0,
-                    commission_income=84000.0,
+                    gross_profit=84000.0,
                     margin_amount=36000.0,
                     margin_pct=0.30,
                     lead_count=18,
@@ -62,9 +68,10 @@ class FakeTravelConsultantsService:
                     closed_lost_count=4,
                     conversion_rate=0.5,
                     close_rate=0.6923,
-                    median_speed_to_book_days=32.0,
+                    avg_speed_to_book_days=32.0,
                     spend_to_book=None,
                     growth_target_variance_pct=0.08,
+                    yoy_to_date_variance_pct=0.05,
                 )
             ],
             highlights=[
@@ -135,13 +142,74 @@ class FakeTravelConsultantsService:
                 )
             ],
             trend_story=trend_story,
+            three_year_performance=TravelConsultantThreeYearPerformance(
+                travel_closed_files=TravelConsultantThreeYearMatrix(
+                    key="travel_closed_files",
+                    title="Travel Closed Files",
+                    metric_label="Booked Revenue",
+                    series=[
+                        TravelConsultantThreeYearSeries(
+                            year=2024,
+                            monthly_values=[85000.0] * 12,
+                            total=1020000.0,
+                        ),
+                        TravelConsultantThreeYearSeries(
+                            year=2025,
+                            monthly_values=[92000.0] * 12,
+                            total=1104000.0,
+                        ),
+                        TravelConsultantThreeYearSeries(
+                            year=2026,
+                            monthly_values=[100000.0] + [0.0] * 11,
+                            total=100000.0,
+                        ),
+                    ],
+                    variances=[
+                        TravelConsultantThreeYearVariance(
+                            label="YoY",
+                            monthly_variance_pct=[0.08] * 12,
+                            total_variance_pct=0.08,
+                        )
+                    ],
+                ),
+                lead_funnel=TravelConsultantThreeYearMatrix(
+                    key="lead_funnel",
+                    title="Lead Funnel",
+                    metric_label="Conversion Rate",
+                    series=[
+                        TravelConsultantThreeYearSeries(
+                            year=2024,
+                            monthly_values=[0.42] * 12,
+                            total=5.04,
+                        ),
+                        TravelConsultantThreeYearSeries(
+                            year=2025,
+                            monthly_values=[0.47] * 12,
+                            total=5.64,
+                        ),
+                        TravelConsultantThreeYearSeries(
+                            year=2026,
+                            monthly_values=[0.50] + [0.0] * 11,
+                            total=0.50,
+                        ),
+                    ],
+                    variances=[
+                        TravelConsultantThreeYearVariance(
+                            label="YoY",
+                            monthly_variance_pct=[0.06] * 12,
+                            total_variance_pct=0.06,
+                        )
+                    ],
+                ),
+            ),
+            ytd_variance_pct=0.1111,
             funnel_health=TravelConsultantFunnelHealth(
                 lead_count=18,
                 closed_won_count=9,
                 closed_lost_count=4,
                 conversion_rate=0.5,
                 close_rate=0.6923,
-                median_speed_to_book_days=32.0,
+                avg_speed_to_book_days=32.0,
             ),
             forecast_and_target=TravelConsultantForecastSection(
                 timeline=[forecast_point],
@@ -153,6 +221,34 @@ class FakeTravelConsultantsService:
                 commission_rate=0.15,
                 estimated_commission_amount=12600.0,
                 estimated_total_pay_amount=20516.67,
+            ),
+            operational_snapshot=TravelConsultantOperationalSnapshot(
+                current_traveling_files=[
+                    TravelConsultantOperationalItinerary(
+                        itinerary_id="itin-1",
+                        itinerary_number="ITI-1001",
+                        itinerary_name="Italy Escape",
+                        itinerary_status="traveling",
+                        primary_country="Italy",
+                        travel_start_date=date(2026, 2, 20),
+                        travel_end_date=date(2026, 2, 28),
+                        gross_amount=50000.0,
+                        pax_count=6,
+                    )
+                ],
+                top_open_itineraries=[
+                    TravelConsultantOperationalItinerary(
+                        itinerary_id="itin-2",
+                        itinerary_number="ITI-1002",
+                        itinerary_name="Japan Spring",
+                        itinerary_status="open",
+                        primary_country="Japan",
+                        travel_start_date=date(2026, 3, 10),
+                        travel_end_date=date(2026, 3, 20),
+                        gross_amount=70000.0,
+                        pax_count=8,
+                    )
+                ],
             ),
             signals=[
                 TravelConsultantSignal(

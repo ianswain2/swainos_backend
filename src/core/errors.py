@@ -7,6 +7,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from src.core.request_context import get_request_id
+
 
 class ErrorDetail(BaseModel):
     code: str
@@ -37,16 +39,21 @@ class ErrorEnvelope(BaseModel):
 
 
 def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
-    envelope = ErrorEnvelope(error=ErrorDetail(code=exc.code, message=exc.message))
+    details = {"requestId": get_request_id()} if get_request_id() else None
+    envelope = ErrorEnvelope(error=ErrorDetail(code=exc.code, message=exc.message, details=details))
     return JSONResponse(status_code=exc.status_code, content=envelope.model_dump())
 
 
 def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    details: Dict[str, Any] = {"errors": exc.errors()}
+    request_id = get_request_id()
+    if request_id:
+        details["requestId"] = request_id
     envelope = ErrorEnvelope(
         error=ErrorDetail(
             code="validation_error",
             message="Validation error",
-            details={"errors": exc.errors()},
+            details=details,
         )
     )
     return JSONResponse(status_code=422, content=envelope.model_dump())

@@ -12,6 +12,7 @@ from src.api.itinerary_revenue import router as itinerary_revenue_router
 from src.api.itinerary_lead_flow import router as itinerary_lead_flow_router
 from src.api.itinerary_trends import router as itinerary_trends_router
 from src.api.payments_out import router as payments_out_router
+from src.api.revenue_bookings import router as revenue_bookings_router
 from src.api.travel_consultants import router as travel_consultants_router
 from src.api.travel_agents import router as travel_agents_router
 from src.api.travel_agencies import router as travel_agencies_router
@@ -23,6 +24,7 @@ api_router.include_router(health_router)
 api_router.include_router(cash_flow_router)
 api_router.include_router(deposits_router)
 api_router.include_router(payments_out_router)
+api_router.include_router(revenue_bookings_router)
 api_router.include_router(booking_forecasts_router)
 api_router.include_router(itinerary_trends_router)
 api_router.include_router(itinerary_lead_flow_router)

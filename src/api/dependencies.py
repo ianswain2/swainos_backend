@@ -14,7 +14,6 @@ from src.repositories.travel_trade_search_repository import TravelTradeSearchRep
 from src.services.fx_service import FxService
 from src.services.fx_intelligence_service import FxIntelligenceService
 from src.services.ai_insights_service import AiInsightsService
-from src.services.ai_orchestration_service import AiOrchestrationService
 from src.services.itinerary_revenue_service import ItineraryRevenueService
 from src.services.openai_insights_service import OpenAiInsightsService
 from src.services.revenue_bookings_service import RevenueBookingsService
@@ -110,14 +109,6 @@ def get_ai_insights_repository() -> AiInsightsRepository:
 @lru_cache
 def get_openai_insights_service() -> OpenAiInsightsService:
     return OpenAiInsightsService()
-
-
-def get_ai_orchestration_service() -> AiOrchestrationService:
-    return AiOrchestrationService(
-        repository=get_ai_insights_repository(),
-        openai_service=get_openai_insights_service(),
-        travel_consultants_service=get_travel_consultants_service(),
-    )
 
 
 def get_ai_insights_service() -> AiInsightsService:

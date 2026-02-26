@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
 from src.core.config import get_settings
-from src.core.errors import BadRequestError
 from src.repositories.fx_repository import FxRepository
 from src.schemas.fx import FxIntelligenceItem, FxIntelligenceRunRequest, FxManualRunResult
 from src.services.openai_insights_service import OpenAiInsightsService
@@ -36,6 +36,7 @@ class FxIntelligenceService:
         self.repository = repository
         self.openai_service = openai_service
         self.settings = get_settings()
+        self.logger = logging.getLogger(__name__)
 
     def _target_currencies(self) -> List[str]:
         raw = self.settings.fx_target_currencies or ""
@@ -136,6 +137,7 @@ class FxIntelligenceService:
                 message="FX intelligence run completed",
             )
         except Exception as exc:
+            self.logger.exception("fx_intelligence_run_failed", extra={"runId": run.id})
             self.repository.update_intelligence_run(
                 run.id,
                 {
@@ -172,7 +174,11 @@ class FxIntelligenceService:
             response = httpx.get(endpoint, params=params, timeout=20.0)
             response.raise_for_status()
             payload = response.json()
-        except Exception:
+        except Exception as exc:
+            self.logger.warning(
+                "fx_macro_fetch_failed",
+                extra={"currencyCode": currency_code, "error": str(exc)},
+            )
             return []
 
         observations = payload.get("observations") if isinstance(payload, dict) else None
@@ -231,7 +237,11 @@ class FxIntelligenceService:
             response = httpx.get(endpoint, params=params, timeout=20.0)
             response.raise_for_status()
             payload = response.json()
-        except Exception:
+        except Exception as exc:
+            self.logger.warning(
+                "fx_news_fetch_failed",
+                extra={"currencyCode": currency_code, "error": str(exc)},
+            )
             return []
 
         data = payload.get("data") if isinstance(payload, dict) else None

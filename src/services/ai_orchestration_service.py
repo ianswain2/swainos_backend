@@ -604,8 +604,8 @@ class AiOrchestrationService:
             "source_metrics": {"itineraryHealthContext": itinerary_row},
             "metadata": {"trigger": "manual", "reason": "threshold_breach"},
             "generated_at": now_iso,
-            "model_name": "deterministic-fallback",
-            "model_tier": "fallback",
+            "model_name": "rules-engine",
+            "model_tier": "support",
             "tokens_used": 0,
             "latency_ms": 0,
             "run_id": run_id,
@@ -758,10 +758,6 @@ class AiOrchestrationService:
             (rolling_split or {}).get("bookedRevenueDelta") or 0.0
         )
         benchmark_context = consultant_row.get("benchmark_context") or {}
-        target_conversion_rate = float(
-            benchmark_context.get("targetConversionRate")
-            or AiOrchestrationService.TARGET_CONVERSION_RATE
-        )
         target_margin_pct = float(
             benchmark_context.get("targetMarginPct") or AiOrchestrationService.TARGET_MARGIN_PCT
         )

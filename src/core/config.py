@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     app_name: str = "SwainOS Backend"
     environment: str = "development"
+    log_level: str = "INFO"
     api_prefix: str = "/api/v1"
     cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
@@ -83,3 +84,11 @@ def get_settings() -> Settings:
 def get_cors_origins() -> list[str]:
     settings = get_settings()
     return [origin.strip() for origin in settings.cors_allow_origins.split(",") if origin.strip()]
+
+
+def validate_runtime_settings() -> None:
+    settings = get_settings()
+    if not settings.supabase_url:
+        raise ValueError("SUPABASE_URL is required")
+    if not (settings.supabase_service_role_key or settings.supabase_anon_key):
+        raise ValueError("SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY is required")

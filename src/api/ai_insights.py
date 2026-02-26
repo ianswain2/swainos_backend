@@ -4,6 +4,7 @@ from datetime import date
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Header, Query
+from fastapi.concurrency import run_in_threadpool
 
 from src.api.dependencies import get_ai_insights_service
 from src.core.config import get_settings
@@ -109,11 +110,11 @@ def require_manual_run_access(
 
 
 @router.get("/briefing")
-def ai_briefing(
+async def ai_briefing(
     briefing_date: Optional[date] = Query(default=None),
     service: AiInsightsService = Depends(get_ai_insights_service),
 ) -> ResponseEnvelope[AiBriefingDaily]:
-    data = service.get_briefing(briefing_date=briefing_date)
+    data = await run_in_threadpool(service.get_briefing, briefing_date=briefing_date)
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="ai_briefings_daily",
@@ -125,11 +126,11 @@ def ai_briefing(
 
 
 @router.get("/feed")
-def ai_feed(
+async def ai_feed(
     filters: AiInsightsFeedFilters = Depends(get_feed_filters),
     service: AiInsightsService = Depends(get_ai_insights_service),
 ) -> ResponseEnvelope[AiInsightFeedResponse]:
-    data, pagination = service.get_feed(filters)
+    data, pagination = await run_in_threadpool(service.get_feed, filters)
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="ai_insight_events",
@@ -141,11 +142,11 @@ def ai_feed(
 
 
 @router.get("/recommendations")
-def ai_recommendations(
+async def ai_recommendations(
     filters: AiRecommendationFilters = Depends(get_recommendation_filters),
     service: AiInsightsService = Depends(get_ai_insights_service),
 ) -> ResponseEnvelope[AiRecommendationQueueResponse]:
-    data, pagination = service.get_recommendations(filters)
+    data, pagination = await run_in_threadpool(service.get_recommendations, filters)
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="ai_recommendation_queue",
@@ -157,12 +158,12 @@ def ai_recommendations(
 
 
 @router.patch("/recommendations/{recommendation_id}")
-def ai_recommendation_transition(
+async def ai_recommendation_transition(
     recommendation_id: str,
     request: AiRecommendationUpdateRequest,
     service: AiInsightsService = Depends(get_ai_insights_service),
 ) -> ResponseEnvelope[Any]:
-    data = service.update_recommendation(recommendation_id, request)
+    data = await run_in_threadpool(service.update_recommendation, recommendation_id, request)
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="ai_recommendation_queue",
@@ -174,11 +175,11 @@ def ai_recommendation_transition(
 
 
 @router.get("/history")
-def ai_history(
+async def ai_history(
     filters: AiInsightsHistoryFilters = Depends(get_history_filters),
     service: AiInsightsService = Depends(get_ai_insights_service),
 ) -> ResponseEnvelope[AiInsightHistoryResponse]:
-    data, pagination = service.get_history(filters)
+    data, pagination = await run_in_threadpool(service.get_history, filters)
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="ai_insight_events",
@@ -190,12 +191,12 @@ def ai_history(
 
 
 @router.get("/entities/{entity_type}/{entity_id}")
-def ai_entity_insights(
+async def ai_entity_insights(
     entity_type: str,
     entity_id: str,
     service: AiInsightsService = Depends(get_ai_insights_service),
 ) -> ResponseEnvelope[AiEntityInsightsResponse]:
-    data = service.get_entity_insights(entity_type, entity_id)
+    data = await run_in_threadpool(service.get_entity_insights, entity_type, entity_id)
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="ai_insight_events",
@@ -207,11 +208,11 @@ def ai_entity_insights(
 
 
 @router.post("/run")
-def ai_run_manual_generation(
+async def ai_run_manual_generation(
     _: None = Depends(require_manual_run_access),
     service: AiInsightsService = Depends(get_ai_insights_service),
 ) -> ResponseEnvelope[Dict[str, Any]]:
-    data = service.run_manual_generation(trigger="manual_api")
+    data = await run_in_threadpool(service.run_manual_generation, trigger="manual_api")
     meta = Meta(
         as_of_date=date.today().isoformat(),
         source="ai_context_*",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from decimal import Decimal
@@ -29,6 +30,7 @@ class OpenAiInsightsService:
 
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.logger = logging.getLogger(__name__)
 
     def build_structured_output(
         self,
@@ -43,14 +45,8 @@ class OpenAiInsightsService:
         primary_model_name = self._resolve_model_for_tier(tier)
         api_key = self.settings.openai_api_key
         if not api_key:
-            return ModelExecutionResult(
-                payload=fallback_payload,
-                model_name="deterministic-fallback",
-                model_tier=self.TIER_FALLBACK,
-                tokens_used=0,
-                latency_ms=0,
-                used_fallback=True,
-            )
+            self.logger.error("openai_api_key_missing")
+            raise BadRequestError("OPENAI_API_KEY is required for AI insight generation")
 
         attempts = max(self.settings.openai_max_retries, 0) + 1
         fallback_models = self._fallback_models_for_tier(tier)
@@ -106,18 +102,19 @@ class OpenAiInsightsService:
                     )
                 except (httpx.HTTPError, ValueError, json.JSONDecodeError) as exc:
                     last_error = exc
+                    self.logger.warning(
+                        "openai_model_attempt_failed",
+                        extra={"model": model_name, "operation": operation, "error": str(exc)},
+                    )
                     continue
 
-        # Deterministic fallback on repeated model failure.
-        _ = last_error
-        return ModelExecutionResult(
-            payload=fallback_payload,
-            model_name="deterministic-fallback",
-            model_tier=self.TIER_FALLBACK,
-            tokens_used=0,
-            latency_ms=0,
-            used_fallback=True,
-        )
+        if last_error:
+            self.logger.error(
+                "openai_all_attempts_failed",
+                extra={"operation": operation, "error": str(last_error)},
+            )
+            raise BadRequestError(f"AI generation failed for operation '{operation}': {last_error}")
+        raise BadRequestError(f"AI generation failed for operation '{operation}'")
 
     def _resolve_model_for_tier(self, tier: str) -> str:
         if tier == self.TIER_DECISION:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import logging
 from typing import Any, Dict, List
 
 from src.core.errors import BadRequestError, NotFoundError
@@ -34,6 +35,7 @@ TRANSITION_MAP: Dict[str, set[str]] = {
 class AiInsightsService:
     def __init__(self, repository: AiInsightsRepository) -> None:
         self.repository = repository
+        self.logger = logging.getLogger(__name__)
 
     def get_briefing(self, briefing_date: date | None = None) -> AiBriefingDaily:
         row = self.repository.get_latest_briefing(briefing_date=briefing_date)
@@ -102,7 +104,11 @@ class AiInsightsService:
             repository=self.repository,
             openai_service=OpenAiInsightsService(),
         )
-        return orchestration_service.generate_insights(trigger=trigger)
+        try:
+            return orchestration_service.generate_insights(trigger=trigger)
+        except Exception:
+            self.logger.exception("ai_manual_generation_failed", extra={"trigger": trigger})
+            raise
 
     def _to_insight_event(self, row: Dict[str, Any]) -> AiInsightEvent:
         evidence = self._parse_evidence(row.get("evidence"))

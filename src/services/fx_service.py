@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import logging
 from typing import Dict, List, Optional, Tuple
 
 import httpx
@@ -32,6 +33,7 @@ class FxService:
     def __init__(self, repository: FxRepository) -> None:
         self.repository = repository
         self.settings = get_settings()
+        self.logger = logging.getLogger(__name__)
 
     def _target_currencies(self) -> list[str]:
         raw = self.settings.fx_target_currencies or ""
@@ -129,6 +131,7 @@ class FxService:
                 message="FX rates pulled and exposure refreshed",
             )
         except Exception as exc:
+            self.logger.exception("fx_rates_pull_failed", extra={"provider": self.settings.fx_primary_provider})
             if sync_log_id:
                 self.repository.update_sync_log(
                     sync_log_id,
@@ -202,6 +205,7 @@ class FxService:
                 }
             except Exception as exc:
                 last_error = exc
+                self.logger.warning("fx_rate_fetch_attempt_failed", extra={"pair": pair, "error": str(exc)})
                 continue
         raise BadRequestError(f"Failed to fetch rate for {pair}: {last_error}")
 
@@ -354,6 +358,7 @@ class FxService:
                 message="FX signals generated",
             )
         except Exception as exc:
+            self.logger.exception("fx_signal_run_failed", extra={"runId": run.id})
             self.repository.update_signal_run(
                 run.id,
                 {

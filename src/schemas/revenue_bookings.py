@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
 from typing import List, Optional
 
 from pydantic import Field
@@ -15,8 +14,8 @@ class BookingSummary(BaseSchema):
     booking_number: Optional[str] = None
     service_start_date: Optional[date] = None
     service_end_date: Optional[date] = None
-    gross_amount: Optional[Decimal] = None
-    net_amount: Optional[Decimal] = None
+    gross_amount: Optional[float] = None
+    net_amount: Optional[float] = None
     currency_code: Optional[str] = None
     itinerary_id: Optional[str] = None
     lineage: Lineage
@@ -33,30 +32,30 @@ class BookingDetail(BookingSummary):
 
 class DepositSummary(BaseSchema):
     currency_code: str
-    total_deposits: Decimal
-    received_deposits: Decimal
-    outstanding_deposits: Decimal
+    total_deposits: float
+    received_deposits: float
+    outstanding_deposits: float
 
 
 class PaymentOutSummary(BaseSchema):
     currency_code: str
-    total_invoices: Decimal
-    paid_amount: Decimal
-    outstanding_amount: Decimal
+    total_invoices: float
+    paid_amount: float
+    outstanding_amount: float
 
 
 class CashFlowSummary(BaseSchema):
     currency_code: str
-    cash_in_total: Decimal
-    cash_out_total: Decimal
-    net_cash_total: Decimal
+    cash_in_total: float
+    cash_out_total: float
+    net_cash_total: float
 
 
 class CashFlowTimeseriesPoint(BaseSchema):
     period_start: date
-    cash_in: Decimal
-    cash_out: Decimal
-    net_cash: Decimal
+    cash_in: float
+    cash_out: float
+    net_cash: float
 
 
 class BookingForecastPoint(BaseSchema):

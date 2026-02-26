@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, Query
+from fastapi.concurrency import run_in_threadpool
 
 from src.api.dependencies import get_fx_intelligence_service, get_fx_service
 from src.core.config import get_settings
@@ -67,13 +68,14 @@ def _validate_manual_run_token(x_fx_run_token: Optional[str]) -> None:
 
 
 @router.get("/rates")
-def fx_rates(
+async def fx_rates(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     include_totals: bool = Query(default=False),
     service: FxService = Depends(get_fx_service),
 ) -> ResponseEnvelope[List[FxRate]]:
-    data, total_count = service.get_rates(
+    data, total_count = await run_in_threadpool(
+        service.get_rates,
         page=page,
         page_size=page_size,
         include_totals=include_totals,
@@ -92,13 +94,13 @@ def fx_rates(
 
 
 @router.post("/rates/run")
-def fx_rates_run(
+async def fx_rates_run(
     request: FxRatePullRunRequest,
     service: FxService = Depends(get_fx_service),
     x_fx_run_token: Optional[str] = Header(default=None),
 ) -> ResponseEnvelope[FxManualRunResult]:
     _validate_manual_run_token(x_fx_run_token)
-    result = service.pull_rates(request)
+    result = await run_in_threadpool(service.pull_rates, request)
     return ResponseEnvelope(
         data=result,
         pagination=None,
@@ -107,11 +109,11 @@ def fx_rates_run(
 
 
 @router.get("/exposure")
-def fx_exposure(
+async def fx_exposure(
     service: FxService = Depends(get_fx_service),
 ) -> ResponseEnvelope[List[FxExposure]]:
-    data = service.get_exposure()
-    latest_rate_timestamp = service.get_latest_rate_timestamp()
+    data = await run_in_threadpool(service.get_exposure)
+    latest_rate_timestamp = await run_in_threadpool(service.get_latest_rate_timestamp)
     stale = _is_stale(latest_rate_timestamp, get_settings().fx_stale_after_minutes)
     data_status = "degraded" if stale else "live"
     meta = _build_meta(
@@ -124,14 +126,15 @@ def fx_exposure(
 
 
 @router.get("/signals")
-def fx_signals(
+async def fx_signals(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
     include_totals: bool = Query(default=False),
     currency_code: Optional[str] = Query(default=None),
     service: FxService = Depends(get_fx_service),
 ) -> ResponseEnvelope[List[FxSignal]]:
-    data, total_count = service.get_signals(
+    data, total_count = await run_in_threadpool(
+        service.get_signals,
         page=page,
         page_size=page_size,
         include_totals=include_totals,
@@ -153,13 +156,13 @@ def fx_signals(
 
 
 @router.post("/signals/run")
-def fx_signals_run(
+async def fx_signals_run(
     request: FxSignalRunRequest,
     service: FxService = Depends(get_fx_service),
     x_fx_run_token: Optional[str] = Header(default=None),
 ) -> ResponseEnvelope[FxManualRunResult]:
     _validate_manual_run_token(x_fx_run_token)
-    result = service.run_signals(request)
+    result = await run_in_threadpool(service.run_signals, request)
     return ResponseEnvelope(
         data=result,
         pagination=None,
@@ -168,7 +171,7 @@ def fx_signals_run(
 
 
 @router.get("/transactions")
-def fx_transactions(
+async def fx_transactions(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=100, ge=1, le=500),
     include_totals: bool = Query(default=False),
@@ -176,7 +179,8 @@ def fx_transactions(
     transaction_type: Optional[str] = Query(default=None),
     service: FxService = Depends(get_fx_service),
 ) -> ResponseEnvelope[List[FxTransaction]]:
-    data, total_count = service.get_transactions(
+    data, total_count = await run_in_threadpool(
+        service.get_transactions,
         page=page,
         page_size=page_size,
         include_totals=include_totals,
@@ -191,11 +195,11 @@ def fx_transactions(
 
 
 @router.post("/transactions")
-def fx_transactions_create(
+async def fx_transactions_create(
     request: FxTransactionCreateRequest,
     service: FxService = Depends(get_fx_service),
 ) -> ResponseEnvelope[FxTransaction]:
-    created = service.create_transaction(request)
+    created = await run_in_threadpool(service.create_transaction, request)
     return ResponseEnvelope(
         data=created,
         pagination=None,
@@ -204,11 +208,11 @@ def fx_transactions_create(
 
 
 @router.get("/holdings")
-def fx_holdings(
+async def fx_holdings(
     currency_code: Optional[str] = Query(default=None),
     service: FxService = Depends(get_fx_service),
 ) -> ResponseEnvelope[List[FxHolding]]:
-    data = service.get_holdings(currency_code=currency_code)
+    data = await run_in_threadpool(service.get_holdings, currency_code=currency_code)
     return ResponseEnvelope(
         data=data,
         pagination=None,
@@ -217,14 +221,15 @@ def fx_holdings(
 
 
 @router.get("/intelligence")
-def fx_intelligence(
+async def fx_intelligence(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     include_totals: bool = Query(default=False),
     currency_code: Optional[str] = Query(default=None),
     service: FxIntelligenceService = Depends(get_fx_intelligence_service),
 ) -> ResponseEnvelope[List[FxIntelligenceItem]]:
-    data, total_count = service.list_intelligence(
+    data, total_count = await run_in_threadpool(
+        service.list_intelligence,
         page=page,
         page_size=page_size,
         include_totals=include_totals,
@@ -249,7 +254,7 @@ def fx_intelligence(
 
 
 @router.post("/intelligence/run")
-def fx_intelligence_run(
+async def fx_intelligence_run(
     request: FxIntelligenceRunRequest,
     service: FxIntelligenceService = Depends(get_fx_intelligence_service),
     x_fx_run_token: Optional[str] = Header(default=None),
@@ -257,7 +262,7 @@ def fx_intelligence_run(
     if not get_settings().fx_intelligence_on_demand_enabled:
         raise BadRequestError("FX intelligence on-demand runs are disabled")
     _validate_manual_run_token(x_fx_run_token)
-    result = service.run_intelligence(request)
+    result = await run_in_threadpool(service.run_intelligence, request)
     return ResponseEnvelope(
         data=result,
         pagination=None,
@@ -266,10 +271,10 @@ def fx_intelligence_run(
 
 
 @router.get("/invoice-pressure")
-def fx_invoice_pressure(
+async def fx_invoice_pressure(
     service: FxService = Depends(get_fx_service),
 ) -> ResponseEnvelope[List[FxInvoicePressure]]:
-    data = service.get_invoice_pressure()
+    data = await run_in_threadpool(service.get_invoice_pressure)
     status = "live" if data else "partial"
     return ResponseEnvelope(
         data=data,
