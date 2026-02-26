@@ -183,4 +183,3 @@ class OpenAiInsightsService:
         if isinstance(value, tuple):
             return [OpenAiInsightsService._to_json_compatible(item) for item in value]
         return value
-

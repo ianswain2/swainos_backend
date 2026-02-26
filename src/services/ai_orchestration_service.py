@@ -1116,4 +1116,3 @@ class AiOrchestrationService:
             normalized = re.sub(pattern, replacement, normalized)
         normalized = re.sub(r"\bmargin %\b", "Margin %", normalized)
         return normalized
-

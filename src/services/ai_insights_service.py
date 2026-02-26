@@ -321,4 +321,3 @@ class AiInsightsService:
         if " " in clipped:
             clipped = clipped.rsplit(" ", 1)[0]
         return f"{clipped}..."
-
