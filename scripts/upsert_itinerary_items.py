@@ -82,6 +82,23 @@ def normalize_int(value: Optional[str]) -> Optional[int]:
         return None
 
 
+def normalize_bool(value: Optional[str]) -> Optional[bool]:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if normalized in {"true", "t", "1", "yes", "y"}:
+        return True
+    if normalized in {"false", "f", "0", "no", "n"}:
+        return False
+    return None
+
+
+def normalize_timestamp(value: Optional[str]) -> Optional[str]:
+    return normalize_text(value)
+
+
 def chunk_rows(rows: Iterable[Dict[str, Any]], size: int) -> Iterable[List[Dict[str, Any]]]:
     batch: List[Dict[str, Any]] = []
     for row in rows:
@@ -209,6 +226,7 @@ def build_item_payload(
         "supplier_id": supplier_id,
         "item_type": row.get("item_type"),
         "item_name": row.get("item_name"),
+        "full_service_name": row.get("full_service_name"),
         "item_description": row.get("item_description") or row.get("description"),
         "service_start_date": normalize_date(row.get("service_start_date") or row.get("date_from")),
         "service_end_date": normalize_date(row.get("service_end_date") or row.get("date_to")),
@@ -220,12 +238,24 @@ def build_item_payload(
         "quantity": normalize_int(row.get("quantity")),
         "unit_cost": normalize_float(row.get("unit_cost")),
         "total_cost": normalize_float(row.get("total_cost")),
+        "unit_price": normalize_float(row.get("unit_price")),
+        "total_price": normalize_float(row.get("total_price")),
+        "subtotal_price": normalize_float(row.get("subtotal_price")),
+        "subtotal_cost": normalize_float(row.get("subtotal_cost")),
+        "gross_margin": normalize_float(row.get("gross_margin")),
+        "profit_margin_percent": normalize_float(row.get("profit_margin_percent")),
+        "is_cancelled": normalize_bool(row.get("is_cancelled")),
+        "cancelled_date": normalize_date(row.get("cancelled_date")),
+        "is_invoiced": normalize_bool(row.get("is_invoiced")),
+        "is_deleted": normalize_bool(row.get("is_deleted")),
+        "voucher_title": row.get("voucher_title"),
+        "destination_continent": row.get("destination_continent"),
         "currency_code": row.get("currency_code"),
         "confirmation_number": row.get("confirmation_number") or row.get("voucher_reference"),
         "item_status": row.get("item_status") or row.get("confirmation_status"),
-        "created_at": row.get("created_at"),
-        "updated_at": row.get("updated_at"),
-        "synced_at": row.get("synced_at"),
+        "created_at": normalize_timestamp(row.get("created_at")),
+        "updated_at": normalize_timestamp(row.get("updated_at")),
+        "synced_at": normalize_timestamp(row.get("synced_at")),
     }
 
 
