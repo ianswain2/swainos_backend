@@ -54,6 +54,59 @@ class SupplierInvoiceRecord(BaseModel):
     synced_at: Optional[datetime] = None
 
 
+class ApOpenLiabilityRecord(BaseModel):
+    supplier_invoice_line_id: str
+    supplier_invoice_line_external_id: Optional[str] = None
+    supplier_invoice_booking_id: Optional[str] = None
+    supplier_invoice_booking_external_id: Optional[str] = None
+    supplier_invoice_id: Optional[str] = None
+    supplier_id: Optional[str] = None
+    supplier_name: Optional[str] = None
+    itinerary_id: Optional[str] = None
+    line_label: Optional[str] = None
+    service_date: Optional[date] = None
+    due_date: Optional[date] = None
+    effective_payment_date: Optional[date] = None
+    currency_code: Optional[str] = None
+    outstanding_amount: Optional[Decimal] = None
+
+
+class ApSummaryRecord(BaseModel):
+    currency_code: str
+    open_line_count: int
+    open_booking_count: int
+    open_supplier_count: int
+    total_outstanding_amount: Decimal
+    next_due_date: Optional[date] = None
+
+
+class ApAgingRecord(BaseModel):
+    currency_code: str
+    open_line_count: int
+    total_outstanding_amount: Decimal
+    current_not_due_amount: Decimal
+    overdue_1_30_amount: Decimal
+    overdue_31_60_amount: Decimal
+    overdue_61_90_amount: Decimal
+    overdue_90_plus_amount: Decimal
+
+
+class ApPaymentCalendarRecord(BaseModel):
+    payment_date: Optional[date] = None
+    currency_code: str
+    line_count: int
+    supplier_count: int
+    amount_due: Decimal
+
+
+class ApMonthlyOutflowRecord(BaseModel):
+    month_start: date
+    currency_code: str
+    line_count: int
+    supplier_count: int
+    amount_due: Decimal
+
+
 class ItineraryTrendRecord(BaseModel):
     period_start: date
     created_count: int

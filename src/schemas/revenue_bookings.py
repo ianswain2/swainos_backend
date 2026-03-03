@@ -35,13 +35,47 @@ class DepositSummary(BaseSchema):
     total_deposits: float
     received_deposits: float
     outstanding_deposits: float
+    available_cash_after_liability: float
 
 
 class PaymentOutSummary(BaseSchema):
     currency_code: str
-    total_invoices: float
-    paid_amount: float
-    outstanding_amount: float
+    open_line_count: int
+    total_outstanding_amount: float
+    due_30d_amount: float
+    next_due_date: Optional[date] = None
+
+
+class ApSummary(BaseSchema):
+    currency_code: str
+    open_line_count: int
+    open_booking_count: int
+    open_supplier_count: int
+    total_outstanding_amount: float
+    due_7d_amount: float
+    due_30d_amount: float
+    due_60d_amount: float
+    due_90d_amount: float
+    next_due_date: Optional[date] = None
+
+
+class ApAging(BaseSchema):
+    currency_code: str
+    open_line_count: int
+    total_outstanding_amount: float
+    current_not_due_amount: float
+    overdue_1_30_amount: float
+    overdue_31_60_amount: float
+    overdue_61_90_amount: float
+    overdue_90_plus_amount: float
+
+
+class ApPaymentCalendarPoint(BaseSchema):
+    payment_date: Optional[date] = None
+    currency_code: str
+    line_count: int
+    supplier_count: int
+    amount_due: float
 
 
 class CashFlowSummary(BaseSchema):
@@ -56,6 +90,65 @@ class CashFlowTimeseriesPoint(BaseSchema):
     cash_in: float
     cash_out: float
     net_cash: float
+
+
+class CashFlowRiskDriver(BaseSchema):
+    code: str
+    message: str
+
+
+class CashFlowRiskOverview(BaseSchema):
+    currency_code: str
+    risk_status: str
+    first_risk_date: Optional[date] = None
+    time_to_risk_days: Optional[int] = None
+    projected_ending_cash: float
+    projected_min_cash: float
+    cash_buffer_amount: float
+    coverage_ratio: float
+    risk_drivers: List[CashFlowRiskDriver]
+
+
+class CashFlowForecastPoint(BaseSchema):
+    period_start: date
+    period_end: date
+    cash_in: float
+    cash_out: float
+    net_cash: float
+    projected_ending_cash: float
+    coverage_ratio: float
+    at_risk: bool
+
+
+class CashFlowForecastResponse(BaseSchema):
+    currency_code: str
+    time_window: str
+    points: List[CashFlowForecastPoint]
+
+
+class CashFlowApSchedulePoint(BaseSchema):
+    payment_date: date
+    currency_code: str
+    amount_due: float
+    line_count: int
+    supplier_count: int
+
+
+class CashFlowApMonthlyOutflowPoint(BaseSchema):
+    month_start: date
+    currency_code: str
+    amount_due: float
+    line_count: int
+    supplier_count: int
+
+
+class CashFlowScenarioSummary(BaseSchema):
+    scenario_name: str
+    currency_code: str
+    description: str
+    projected_ending_cash: float
+    first_risk_date: Optional[date] = None
+    risk_status: str
 
 
 class BookingForecastPoint(BaseSchema):

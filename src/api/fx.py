@@ -279,5 +279,5 @@ async def fx_invoice_pressure(
     return ResponseEnvelope(
         data=data,
         pagination=None,
-        meta=_build_meta(source="fx_invoice_pressure_v1", data_status=status),
+        meta=_build_meta(source="ap_pressure_30_60_90_v1", data_status=status),
     )

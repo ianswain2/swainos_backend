@@ -23,6 +23,7 @@ Default prefix: `/api/v1`
 - Itinerary revenue (outlook, deposits, conversion, channels, actuals)
 - Travel consultant / travel agents / travel agencies / travel trade search
 - FX rates / exposure / signals / holdings / transactions / intelligence / invoice pressure
+- Marketing web analytics (overview / search / ai-insights / health / sync)
 - AI insights (briefing/feed/recommendations/history/entities/run)
 
 ## Local Development
@@ -52,8 +53,17 @@ Default prefix: `/api/v1`
 - `API_PREFIX`
 - `CORS_ALLOW_ORIGINS`
 - `FX_MANUAL_RUN_TOKEN`
+- `MARKETING_MANUAL_RUN_TOKEN` (optional; gates manual marketing sync endpoint when set)
 - `AI_MANUAL_RUN_TOKEN`
 - FX provider and behavior settings in `src/core/config.py`
+- GA4 settings:
+  - `GOOGLE_PROJECT_ID`
+  - `GOOGLE_SERVICE_ACCOUNT_EMAIL`
+  - `GOOGLE_SERVICE_ACCOUNT_KEY_JSON`
+  - `GOOGLE_GA4_PROPERTY_ID`
+  - `GOOGLE_GSC_SITE_URL` (optional/deferred)
+  - `MARKETING_DEFAULT_TIMEZONE`
+  - `MARKETING_DEFAULT_CURRENCY`
 
 ## Conventions
 - Python modules: `snake_case.py`
@@ -65,3 +75,14 @@ Default prefix: `/api/v1`
 - `../SwianOS_Documentation/docs/swainos-code-documentation-backend.md`
 - `../SwianOS_Documentation/docs/frontend-data-queries.md`
 - `../SwianOS_Documentation/docs/sample-payloads.md`
+
+## Salesforce Read-Only Sync
+- Runtime script: `scripts/sync_salesforce_readonly.py`
+- Permission preflight: `scripts/validate_salesforce_readonly_permissions.py`
+- Mode: read-only ingestion from Salesforce Bulk API 2.0 (`queryAll`)
+- Incremental cursor: `SystemModstamp + Id` (stored in Supabase runtime tables)
+- Sequence: `agencies -> suppliers -> employees -> itineraries -> itinerary_items`
+- Guardrails:
+  - endpoint allowlist in `src/integrations/salesforce_bulk_client.py`
+  - no retry behavior on failures
+  - singleton lock to avoid overlapping scheduled runs

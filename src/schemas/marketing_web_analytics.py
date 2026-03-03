@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
+from typing import Literal
+
+from src.shared.base import BaseSchema
+
+InsightPriority = Literal["high", "medium", "low"]
+HealthStatus = Literal["connected", "healthy", "pending", "warning", "missing"]
+
+
+class MarketingKpi(BaseSchema):
+    metric_key: str
+    label: str
+    format: Literal["integer", "percent", "currency", "ratio"]
+    current_value: Decimal
+    previous_value: Decimal
+    year_ago_value: Decimal
+    day_over_day_delta_pct: Decimal | None = None
+    month_over_month_delta_pct: Decimal | None = None
+    year_over_year_delta_pct: Decimal | None = None
+
+
+class MarketingTimeSeriesPoint(BaseSchema):
+    snapshot_date: date
+    sessions: Decimal
+    total_users: Decimal
+    engaged_sessions: Decimal
+    key_events: Decimal
+    engagement_rate: Decimal
+
+
+class MarketingLandingPagePerformance(BaseSchema):
+    snapshot_date: date
+    landing_page: str
+    sessions: Decimal
+    total_users: Decimal
+    engagement_rate: Decimal
+    key_events: Decimal
+    avg_session_duration_seconds: Decimal | None = None
+
+
+class MarketingChannelPerformance(BaseSchema):
+    channel_name: str
+    sessions: Decimal
+    total_users: Decimal
+    engagement_rate: Decimal
+    key_events: Decimal
+
+
+class MarketingTrackingEvent(BaseSchema):
+    snapshot_date: date
+    event_name: str
+    event_count: Decimal
+    total_users: Decimal
+    event_value_amount: Decimal | None = None
+
+
+class MarketingEventCatalogItem(BaseSchema):
+    event_name: str
+    event_count: Decimal
+    total_users: Decimal
+    event_value_amount: Decimal | None = None
+    category: Literal["conversion", "engagement", "navigation", "system", "other"]
+    description: str
+    is_conversion_event: bool
+
+
+class MarketingEventCatalog(BaseSchema):
+    snapshot_date: date | None = None
+    events: list[MarketingEventCatalogItem]
+
+
+class MarketingPageActivityRow(BaseSchema):
+    snapshot_date: date
+    page_path: str
+    page_title: str | None = None
+    screen_page_views: Decimal
+    sessions: Decimal
+    total_users: Decimal
+    engaged_sessions: Decimal
+    key_events: Decimal
+    engagement_rate: Decimal
+    key_event_rate: Decimal
+    avg_session_duration_seconds: Decimal | None = None
+    quality_score: Decimal
+    is_itinerary_page: bool
+
+
+class MarketingPageActivity(BaseSchema):
+    snapshot_date: date | None = None
+    metric_guide: str
+    best_pages: list[MarketingPageActivityRow]
+    worst_pages: list[MarketingPageActivityRow]
+    itinerary_pages: list[MarketingPageActivityRow]
+    all_pages: list[MarketingPageActivityRow]
+
+
+class MarketingGeoRow(BaseSchema):
+    snapshot_date: date
+    country: str
+    region: str | None = None
+    city: str | None = None
+    sessions: Decimal
+    total_users: Decimal
+    engaged_sessions: Decimal
+    key_events: Decimal
+    engagement_rate: Decimal
+    key_event_rate: Decimal
+
+
+class MarketingGeoBreakdown(BaseSchema):
+    snapshot_date: date | None = None
+    rows: list[MarketingGeoRow]
+    top_countries: list[MarketingGeoRow]
+
+
+class MarketingOverview(BaseSchema):
+    kpis: list[MarketingKpi]
+    trend: list[MarketingTimeSeriesPoint]
+    top_landing_pages: list[MarketingLandingPagePerformance]
+    channels: list[MarketingChannelPerformance]
+    events: list[MarketingTrackingEvent]
+    search_console_connected: bool
+    currency: str
+    timezone: str
+
+
+class MarketingSearchQuery(BaseSchema):
+    query: str
+    clicks: Decimal
+    impressions: Decimal
+    ctr: Decimal
+    average_position: Decimal
+
+
+class MarketingSearchPerformance(BaseSchema):
+    search_console_connected: bool
+    connection_message: str
+    top_landing_pages: list[MarketingLandingPagePerformance]
+    channels: list[MarketingChannelPerformance]
+    top_queries: list[MarketingSearchQuery]
+
+
+class MarketingAiInsight(BaseSchema):
+    insight_id: str
+    priority: InsightPriority
+    title: str
+    summary: str
+    evidence_points: list[str]
+    recommended_actions: list[str]
+
+
+class MarketingHealthStatus(BaseSchema):
+    key: str
+    label: str
+    status: HealthStatus
+    detail: str
+
+
+class MarketingHealth(BaseSchema):
+    statuses: list[MarketingHealthStatus]
+    last_synced_at: str | None = None
+    latest_run_status: str
+
+
+class MarketingWebAnalyticsSyncResult(BaseSchema):
+    run_id: str
+    status: str
+    records_processed: int
+    records_created: int
+    message: str

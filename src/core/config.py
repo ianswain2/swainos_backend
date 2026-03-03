@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     )
     fx_intelligence_min_source_count: int = Field(default=3, alias="FX_INTELLIGENCE_MIN_SOURCE_COUNT")
 
+    google_project_id: Optional[str] = Field(default=None, alias="GOOGLE_PROJECT_ID")
+    google_service_account_email: Optional[str] = Field(default=None, alias="GOOGLE_SERVICE_ACCOUNT_EMAIL")
+    google_service_account_key_json: Optional[str] = Field(default=None, alias="GOOGLE_SERVICE_ACCOUNT_KEY_JSON")
+    google_ga4_property_id: Optional[str] = Field(default=None, alias="GOOGLE_GA4_PROPERTY_ID")
+    google_gsc_site_url: Optional[str] = Field(default=None, alias="GOOGLE_GSC_SITE_URL")
+    marketing_default_timezone: str = Field(default="America/New_York", alias="MARKETING_DEFAULT_TIMEZONE")
+    marketing_default_currency: str = Field(default="USD", alias="MARKETING_DEFAULT_CURRENCY")
+    marketing_manual_run_token: Optional[str] = Field(default=None, alias="MARKETING_MANUAL_RUN_TOKEN")
+
 
 @lru_cache
 def get_settings() -> Settings:

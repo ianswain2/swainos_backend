@@ -42,7 +42,7 @@ async def payments_out_summary(
     paged_data, pagination = paginate_list(data, filters.page, filters.page_size)
     meta = Meta(
         as_of_date=date.today().isoformat(),
-        source="salesforce_kaptio",
+        source="ap_open_liability_v1",
         time_window=filters.time_window,
         calculation_version="v1",
         currency=filters.currency_code,

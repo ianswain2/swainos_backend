@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from src.repositories.fx_repository import FxRepository
+from src.repositories.marketing_web_analytics_repository import MarketingWebAnalyticsRepository
 from src.repositories.ai_insights_repository import AiInsightsRepository
 from src.repositories.itinerary_pipeline_repository import ItineraryPipelineRepository
 from src.repositories.itinerary_destinations_repository import ItineraryDestinationsRepository
@@ -14,6 +15,7 @@ from src.repositories.travel_agencies_repository import TravelAgenciesRepository
 from src.repositories.travel_trade_search_repository import TravelTradeSearchRepository
 from src.repositories.debt_service_repository import DebtServiceRepository
 from src.services.fx_service import FxService
+from src.services.marketing_web_analytics_service import MarketingWebAnalyticsService
 from src.services.fx_intelligence_service import FxIntelligenceService
 from src.services.ai_insights_service import AiInsightsService
 from src.services.itinerary_revenue_service import ItineraryRevenueService
@@ -25,6 +27,7 @@ from src.services.travel_agents_service import TravelAgentsService
 from src.services.travel_agencies_service import TravelAgenciesService
 from src.services.travel_trade_search_service import TravelTradeSearchService
 from src.services.debt_service_service import DebtServiceService
+from src.integrations.google_analytics_client import GoogleAnalyticsClient
 
 
 @lru_cache
@@ -135,3 +138,20 @@ def get_openai_insights_service() -> OpenAiInsightsService:
 
 def get_ai_insights_service() -> AiInsightsService:
     return AiInsightsService(repository=get_ai_insights_repository())
+
+
+@lru_cache
+def get_marketing_web_analytics_repository() -> MarketingWebAnalyticsRepository:
+    return MarketingWebAnalyticsRepository()
+
+
+@lru_cache
+def get_google_analytics_client() -> GoogleAnalyticsClient:
+    return GoogleAnalyticsClient()
+
+
+def get_marketing_web_analytics_service() -> MarketingWebAnalyticsService:
+    return MarketingWebAnalyticsService(
+        repository=get_marketing_web_analytics_repository(),
+        ga_client=get_google_analytics_client(),
+    )

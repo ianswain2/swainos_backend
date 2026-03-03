@@ -106,7 +106,7 @@ class FxRepository:
 
     def list_invoice_pressure(self) -> List[FxInvoicePressureRecord]:
         rows, _ = self.client.select(
-            table="fx_invoice_pressure_v1",
+            table="ap_pressure_30_60_90_v1",
             select=(
                 "currency_code,due_7d_amount,due_30d_amount,due_60d_amount,due_90d_amount,"
                 "invoices_due_30d_count,next_due_date"
