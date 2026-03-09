@@ -84,7 +84,6 @@ class Settings(BaseSettings):
     marketing_default_currency: str = Field(default="USD", alias="MARKETING_DEFAULT_CURRENCY")
     marketing_manual_run_token: Optional[str] = Field(default=None, alias="MARKETING_MANUAL_RUN_TOKEN")
 
-
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

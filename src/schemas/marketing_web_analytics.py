@@ -8,6 +8,17 @@ from src.shared.base import BaseSchema
 
 InsightPriority = Literal["high", "medium", "low"]
 HealthStatus = Literal["connected", "healthy", "pending", "warning", "missing"]
+InsightCategory = Literal[
+    "acquisition",
+    "conversion",
+    "content",
+    "geography",
+    "device",
+    "intent",
+    "measurement",
+]
+InsightFocusArea = Literal["scale", "fix", "cut", "instrument", "localize", "optimize"]
+InsightOwner = Literal["marketing", "sales", "web", "analytics"]
 
 
 class MarketingKpi(BaseSchema):
@@ -94,6 +105,8 @@ class MarketingPageActivity(BaseSchema):
     best_pages: list[MarketingPageActivityRow]
     worst_pages: list[MarketingPageActivityRow]
     itinerary_pages: list[MarketingPageActivityRow]
+    lookbook_pages: list[MarketingPageActivityRow]
+    destination_pages: list[MarketingPageActivityRow]
     all_pages: list[MarketingPageActivityRow]
 
 
@@ -114,6 +127,8 @@ class MarketingGeoBreakdown(BaseSchema):
     snapshot_date: date | None = None
     rows: list[MarketingGeoRow]
     top_countries: list[MarketingGeoRow]
+    demographics: list[MarketingDemographicRow]
+    devices: list[MarketingDeviceRow]
 
 
 class MarketingOverview(BaseSchema):
@@ -136,18 +151,80 @@ class MarketingSearchQuery(BaseSchema):
 
 
 class MarketingSearchPerformance(BaseSchema):
-    search_console_connected: bool
-    connection_message: str
     top_landing_pages: list[MarketingLandingPagePerformance]
     channels: list[MarketingChannelPerformance]
+    source_mix: list[MarketingSourcePerformance]
+    referral_sources: list[MarketingSourcePerformance]
+    top_valuable_sources: list[MarketingSourcePerformance]
+    internal_site_search_terms: list[MarketingInternalSiteSearchTerm]
+
+
+class MarketingSourcePerformance(BaseSchema):
+    source_label: str
+    source: str
+    medium: str
+    channel_name: str
+    sessions: Decimal
+    total_users: Decimal
+    engaged_sessions: Decimal
+    key_events: Decimal
+    engagement_rate: Decimal
+    key_event_rate: Decimal
+    bounce_rate: Decimal
+    qualified_session_rate: Decimal
+    quality_label: Literal["qualified", "mixed", "poor"]
+    value_score: Decimal
+
+
+class MarketingSearchConsoleInsights(BaseSchema):
+    search_console_connected: bool
+    connection_message: str
+    data_mode: Literal["proxy", "live_gsc"]
     top_queries: list[MarketingSearchQuery]
+    organic_landing_pages: list[MarketingLandingPagePerformance]
+    internal_site_search_terms: list[MarketingInternalSiteSearchTerm]
+
+
+class MarketingDemographicRow(BaseSchema):
+    snapshot_date: date
+    age_bracket: str
+    gender: str
+    sessions: Decimal
+    total_users: Decimal
+    engaged_sessions: Decimal
+    key_events: Decimal
+    engagement_rate: Decimal
+
+
+class MarketingDeviceRow(BaseSchema):
+    snapshot_date: date
+    device_category: str
+    sessions: Decimal
+    total_users: Decimal
+    engaged_sessions: Decimal
+    key_events: Decimal
+    engagement_rate: Decimal
+
+
+class MarketingInternalSiteSearchTerm(BaseSchema):
+    search_term: str
+    event_count: Decimal
+    total_users: Decimal
 
 
 class MarketingAiInsight(BaseSchema):
     insight_id: str
     priority: InsightPriority
+    category: InsightCategory
+    focus_area: InsightFocusArea
     title: str
     summary: str
+    target_label: str
+    target_path: str | None = None
+    owner_hint: InsightOwner
+    primary_metric_label: str
+    impact_score: Decimal
+    confidence_score: Decimal
     evidence_points: list[str]
     recommended_actions: list[str]
 

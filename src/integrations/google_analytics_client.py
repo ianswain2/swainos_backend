@@ -65,6 +65,7 @@ class GoogleAnalyticsClient:
         dimensions: list[str] | None = None,
         limit: int = 1000,
         order_bys: list[dict[str, Any]] | None = None,
+        dimension_filter: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         token = self._access_token()
         body: dict[str, Any] = {
@@ -76,6 +77,8 @@ class GoogleAnalyticsClient:
             body["dimensions"] = [{"name": dimension} for dimension in dimensions]
         if order_bys:
             body["orderBys"] = order_bys
+        if dimension_filter:
+            body["dimensionFilter"] = dimension_filter
 
         url = GA4_RUN_REPORT_URL.format(property_id=self.property_id)
         response = httpx.post(

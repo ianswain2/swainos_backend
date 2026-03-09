@@ -12,18 +12,23 @@ from src.repositories.marketing_web_analytics_repository import MarketingWebAnal
 from src.schemas.marketing_web_analytics import (
     MarketingAiInsight,
     MarketingChannelPerformance,
+    MarketingDemographicRow,
+    MarketingDeviceRow,
     MarketingEventCatalog,
     MarketingEventCatalogItem,
     MarketingGeoBreakdown,
     MarketingGeoRow,
     MarketingHealth,
     MarketingHealthStatus,
+    MarketingInternalSiteSearchTerm,
     MarketingKpi,
     MarketingLandingPagePerformance,
     MarketingOverview,
     MarketingPageActivity,
     MarketingPageActivityRow,
+    MarketingSearchConsoleInsights,
     MarketingSearchPerformance,
+    MarketingSourcePerformance,
     MarketingTimeSeriesPoint,
     MarketingTrackingEvent,
     MarketingWebAnalyticsSyncResult,
@@ -69,6 +74,9 @@ EVENT_DEFINITIONS: dict[
 }
 
 
+MARKETING_ALL_SCOPE = "all"
+
+
 class MarketingWebAnalyticsService:
     def __init__(
         self,
@@ -85,12 +93,85 @@ class MarketingWebAnalyticsService:
         if not (self.settings.google_ga4_property_id or "").strip():
             raise BadRequestError("GOOGLE_GA4_PROPERTY_ID is required")
 
-    def _fetch_daily_channel_breakdown(self, days_back: int = 400) -> list[dict[str, object]]:
+    @staticmethod
+    def _normalize_country_scope(country: str | None) -> str | None:
+        normalized = (country or "").strip()
+        if not normalized or normalized.lower() == MARKETING_ALL_SCOPE:
+            return None
+        return normalized
+
+    def _country_filter(self, country: str | None) -> dict[str, object] | None:
+        normalized = self._normalize_country_scope(country)
+        if not normalized:
+            return None
+        return {
+            "filter": {
+                "fieldName": "country",
+                "stringFilter": {"matchType": "EXACT", "value": normalized},
+            }
+        }
+
+    def _merge_dimension_filters(
+        self,
+        *,
+        country: str | None,
+        additional_filter: dict[str, object] | None = None,
+    ) -> dict[str, object] | None:
+        country_filter = self._country_filter(country)
+        if country_filter and additional_filter:
+            return {
+                "andGroup": {
+                    "expressions": [
+                        country_filter,
+                        additional_filter,
+                    ]
+                }
+            }
+        return country_filter or additional_filter
+
+    def _fetch_daily_totals(self, days_back: int = 800) -> list[dict[str, object]]:
         rows = self.ga_client.run_report(
             start_date=f"{days_back}daysAgo",
             end_date="today",
-            metrics=["sessions", "totalUsers", "engagedSessions", "keyEvents", "engagementRate"],
-            dimensions=["date", "sessionSourceMedium", "sessionDefaultChannelGroup"],
+            metrics=["sessions", "totalUsers", "engagedSessions", "keyEvents"],
+            dimensions=["date"],
+            limit=5000,
+            order_bys=[
+                {
+                    "dimension": {"dimensionName": "date", "orderType": "ALPHANUMERIC"},
+                    "desc": False,
+                }
+            ],
+        )
+        mapped: list[dict[str, object]] = []
+        for row in rows:
+            raw_date = str(row.get("date", ""))
+            if not raw_date:
+                continue
+            sessions = Decimal(row.get("sessions", 0))
+            engaged_sessions = Decimal(row.get("engagedSessions", 0))
+            mapped.append(
+                {
+                    "snapshot_date": _parse_snapshot_date(raw_date).isoformat(),
+                    "sessions": sessions,
+                    "total_users": Decimal(row.get("totalUsers", 0)),
+                    "engaged_sessions": engaged_sessions,
+                    "engagement_rate": (
+                        engaged_sessions / sessions if sessions > 0 else Decimal("0")
+                    ),
+                    "key_events": Decimal(row.get("keyEvents", 0)),
+                    "source_medium": "all",
+                    "default_channel_group": "all",
+                }
+            )
+        return mapped
+
+    def _fetch_channel_totals(self, days_back: int = 800) -> list[dict[str, object]]:
+        rows = self.ga_client.run_report(
+            start_date=f"{days_back}daysAgo",
+            end_date="today",
+            metrics=["sessions", "totalUsers", "engagedSessions", "keyEvents"],
+            dimensions=["date", "sessionDefaultChannelGroup"],
             limit=250000,
             order_bys=[
                 {
@@ -104,31 +185,247 @@ class MarketingWebAnalyticsService:
             raw_date = str(row.get("date", ""))
             if not raw_date:
                 continue
-            snapshot_date = _parse_snapshot_date(raw_date)
+            sessions = Decimal(row.get("sessions", 0))
+            engaged_sessions = Decimal(row.get("engagedSessions", 0))
             mapped.append(
                 {
-                    "snapshot_date": snapshot_date,
-                    "source_medium": str(row.get("sessionSourceMedium") or "unknown / unknown"),
+                    "snapshot_date": _parse_snapshot_date(raw_date).isoformat(),
+                    "source_medium": "all",
                     "default_channel_group": str(
                         row.get("sessionDefaultChannelGroup") or "Unassigned"
                     ),
-                    "sessions": Decimal(row.get("sessions", 0)),
+                    "sessions": sessions,
                     "total_users": Decimal(row.get("totalUsers", 0)),
-                    "engaged_sessions": Decimal(row.get("engagedSessions", 0)),
+                    "engaged_sessions": engaged_sessions,
+                    "engagement_rate": (
+                        engaged_sessions / sessions if sessions > 0 else Decimal("0")
+                    ),
                     "key_events": Decimal(row.get("keyEvents", 0)),
-                    "engagement_rate": Decimal(row.get("engagementRate", 0)),
                 }
             )
         return mapped
 
-    def _fetch_top_landing_pages(self, limit: int = 12) -> list[MarketingLandingPagePerformance]:
+    def _fetch_country_totals(self, days_back: int = 800) -> list[dict[str, object]]:
         rows = self.ga_client.run_report(
-            start_date="30daysAgo",
+            start_date=f"{days_back}daysAgo",
+            end_date="today",
+            metrics=["sessions", "totalUsers", "engagedSessions", "keyEvents"],
+            dimensions=["date", "country"],
+            limit=250000,
+            order_bys=[
+                {
+                    "dimension": {"dimensionName": "date", "orderType": "ALPHANUMERIC"},
+                    "desc": False,
+                }
+            ],
+        )
+        mapped: list[dict[str, object]] = []
+        for row in rows:
+            raw_date = str(row.get("date", ""))
+            if not raw_date:
+                continue
+            sessions = Decimal(row.get("sessions", 0))
+            engaged_sessions = Decimal(row.get("engagedSessions", 0))
+            key_events = Decimal(row.get("keyEvents", 0))
+            mapped.append(
+                {
+                    "snapshot_date": _parse_snapshot_date(raw_date).isoformat(),
+                    "country": str(row.get("country") or "Unknown"),
+                    "sessions": sessions,
+                    "total_users": Decimal(row.get("totalUsers", 0)),
+                    "engaged_sessions": engaged_sessions,
+                    "key_events": key_events,
+                    "engagement_rate": (
+                        engaged_sessions / sessions if sessions > 0 else Decimal("0")
+                    ),
+                    "key_event_rate": key_events / sessions if sessions > 0 else Decimal("0"),
+                }
+            )
+        return mapped
+
+    def _fetch_channel_window_totals(
+        self,
+        *,
+        days_back: int = 30,
+        limit: int = 8,
+        country: str | None = None,
+    ) -> list[MarketingChannelPerformance]:
+        rows = self.ga_client.run_report(
+            start_date=f"{days_back}daysAgo",
+            end_date="today",
+            metrics=["sessions", "totalUsers", "engagedSessions", "keyEvents"],
+            dimensions=["sessionDefaultChannelGroup"],
+            limit=max(limit, 1),
+            order_bys=[{"metric": {"metricName": "sessions"}, "desc": True}],
+            dimension_filter=self._merge_dimension_filters(country=country),
+        )
+        mapped: list[MarketingChannelPerformance] = []
+        for row in rows:
+            sessions = Decimal(row.get("sessions", 0))
+            engaged_sessions = Decimal(row.get("engagedSessions", 0))
+            mapped.append(
+                MarketingChannelPerformance(
+                    channel_name=str(row.get("sessionDefaultChannelGroup") or "Unassigned"),
+                    sessions=sessions,
+                    total_users=Decimal(row.get("totalUsers", 0)),
+                    engagement_rate=engaged_sessions / sessions if sessions > 0 else Decimal("0"),
+                    key_events=Decimal(row.get("keyEvents", 0)),
+                )
+            )
+        return mapped
+
+    def _fetch_country_window_totals(
+        self,
+        *,
+        days_back: int = 30,
+        limit: int = 12,
+        country: str | None = None,
+    ) -> list[MarketingGeoRow]:
+        rows = self.ga_client.run_report(
+            start_date=f"{days_back}daysAgo",
+            end_date="today",
+            metrics=["sessions", "totalUsers", "engagedSessions", "keyEvents"],
+            dimensions=["country"],
+            limit=max(limit, 1),
+            order_bys=[{"metric": {"metricName": "sessions"}, "desc": True}],
+            dimension_filter=self._merge_dimension_filters(country=country),
+        )
+        snapshot_date = date.today()
+        mapped: list[MarketingGeoRow] = []
+        for row in rows:
+            sessions = Decimal(row.get("sessions", 0))
+            engaged_sessions = Decimal(row.get("engagedSessions", 0))
+            key_events = Decimal(row.get("keyEvents", 0))
+            mapped.append(
+                MarketingGeoRow(
+                    snapshot_date=snapshot_date,
+                    country=str(row.get("country") or "Unknown"),
+                    region=None,
+                    city=None,
+                    sessions=sessions,
+                    total_users=Decimal(row.get("totalUsers", 0)),
+                    engaged_sessions=engaged_sessions,
+                    key_events=key_events,
+                    engagement_rate=(engaged_sessions / sessions if sessions > 0 else Decimal("0")),
+                    key_event_rate=key_events / sessions if sessions > 0 else Decimal("0"),
+                )
+            )
+        return mapped
+
+    @staticmethod
+    def _parse_source_medium(source_medium: str) -> tuple[str, str]:
+        source, medium = source_medium, "unknown"
+        if " / " in source_medium:
+            source, medium = source_medium.split(" / ", 1)
+        return source.strip() or "unknown", medium.strip() or "unknown"
+
+    @staticmethod
+    def _source_value_score(
+        *,
+        sessions: Decimal,
+        qualified_session_rate: Decimal,
+        key_event_rate: Decimal,
+        bounce_rate: Decimal,
+    ) -> Decimal:
+        sample_confidence = min(sessions / Decimal("50"), Decimal("1"))
+        traffic_component = min(sessions / Decimal("2000"), Decimal("1"))
+        conversion_component = min(key_event_rate / Decimal("0.05"), Decimal("1"))
+        qualified_component = min(qualified_session_rate / Decimal("0.70"), Decimal("1"))
+        retained_traffic_component = Decimal("1") - min(bounce_rate / Decimal("0.80"), Decimal("1"))
+        return (
+            (
+                (conversion_component * Decimal("45"))
+                + (qualified_component * Decimal("25"))
+                + (retained_traffic_component * Decimal("15"))
+                + (traffic_component * Decimal("15"))
+            )
+            * sample_confidence
+        )
+
+    @staticmethod
+    def _quality_label(
+        *,
+        qualified_session_rate: Decimal,
+        key_event_rate: Decimal,
+        bounce_rate: Decimal,
+    ) -> Literal["qualified", "mixed", "poor"]:
+        if (
+            qualified_session_rate >= Decimal("0.62")
+            and key_event_rate >= Decimal("0.03")
+            and bounce_rate <= Decimal("0.45")
+        ):
+            return "qualified"
+        if qualified_session_rate >= Decimal("0.45") and bounce_rate <= Decimal("0.65"):
+            return "mixed"
+        return "poor"
+
+    def _fetch_source_medium_performance(
+        self,
+        *,
+        days_back: int = 30,
+        limit: int = 25,
+        country: str | None = None,
+    ) -> list[MarketingSourcePerformance]:
+        rows = self.ga_client.run_report(
+            start_date=f"{days_back}daysAgo",
+            end_date="today",
+            metrics=["sessions", "totalUsers", "engagedSessions", "keyEvents", "bounceRate"],
+            dimensions=["sessionSourceMedium", "sessionDefaultChannelGroup"],
+            limit=max(limit, 1),
+            order_bys=[{"metric": {"metricName": "sessions"}, "desc": True}],
+            dimension_filter=self._merge_dimension_filters(country=country),
+        )
+        mapped: list[MarketingSourcePerformance] = []
+        for row in rows:
+            source_medium = str(row.get("sessionSourceMedium") or "unknown / unknown")
+            source, medium = self._parse_source_medium(source_medium)
+            sessions = Decimal(str(row.get("sessions") or 0))
+            engaged_sessions = Decimal(str(row.get("engagedSessions") or 0))
+            key_events = Decimal(str(row.get("keyEvents") or 0))
+            engagement_rate = engaged_sessions / sessions if sessions > 0 else Decimal("0")
+            key_event_rate = key_events / sessions if sessions > 0 else Decimal("0")
+            bounce_rate = Decimal(str(row.get("bounceRate") or 0))
+            qualified_session_rate = engaged_sessions / sessions if sessions > 0 else Decimal("0")
+            mapped.append(
+                MarketingSourcePerformance(
+                    source_label=source_medium,
+                    source=source,
+                    medium=medium,
+                    channel_name=str(row.get("sessionDefaultChannelGroup") or "Unassigned"),
+                    sessions=sessions,
+                    total_users=Decimal(str(row.get("totalUsers") or 0)),
+                    engaged_sessions=engaged_sessions,
+                    key_events=key_events,
+                    engagement_rate=engagement_rate,
+                    key_event_rate=key_event_rate,
+                    bounce_rate=bounce_rate,
+                    qualified_session_rate=qualified_session_rate,
+                    quality_label=self._quality_label(
+                        qualified_session_rate=qualified_session_rate,
+                        key_event_rate=key_event_rate,
+                        bounce_rate=bounce_rate,
+                    ),
+                    value_score=self._source_value_score(
+                        sessions=sessions,
+                        qualified_session_rate=qualified_session_rate,
+                        key_event_rate=key_event_rate,
+                        bounce_rate=bounce_rate,
+                    ),
+                )
+            )
+        return mapped
+
+    def _fetch_top_landing_pages(
+        self, *, days_back: int = 30, limit: int = 12, country: str | None = None
+    ) -> list[MarketingLandingPagePerformance]:
+        rows = self.ga_client.run_report(
+            start_date=f"{days_back}daysAgo",
             end_date="today",
             metrics=["sessions", "totalUsers", "engagementRate", "keyEvents"],
             dimensions=["landingPage"],
             limit=max(limit, 1),
             order_bys=[{"metric": {"metricName": "sessions"}, "desc": True}],
+            dimension_filter=self._merge_dimension_filters(country=country),
         )
         today = date.today()
         return [
@@ -144,14 +441,21 @@ class MarketingWebAnalyticsService:
             for row in rows
         ]
 
-    def _fetch_top_events(self, limit: int = 12) -> list[MarketingTrackingEvent]:
+    def _fetch_top_events(
+        self,
+        *,
+        limit: int = 12,
+        days_back: int = 30,
+        country: str | None = None,
+    ) -> list[MarketingTrackingEvent]:
         rows = self.ga_client.run_report(
-            start_date="30daysAgo",
+            start_date=f"{days_back}daysAgo",
             end_date="today",
             metrics=["eventCount", "totalUsers"],
             dimensions=["eventName"],
             limit=max(limit, 1),
             order_bys=[{"metric": {"metricName": "eventCount"}, "desc": True}],
+            dimension_filter=self._merge_dimension_filters(country=country),
         )
         today = date.today()
         return [
@@ -165,7 +469,9 @@ class MarketingWebAnalyticsService:
             for row in rows
         ]
 
-    def _fetch_page_activity_breakdown(self, days_back: int = 30) -> list[dict[str, object]]:
+    def _fetch_page_activity_breakdown(
+        self, days_back: int = 30, country: str | None = None
+    ) -> list[dict[str, object]]:
         rows = self.ga_client.run_report(
             start_date=f"{days_back}daysAgo",
             end_date="today",
@@ -174,72 +480,44 @@ class MarketingWebAnalyticsService:
                 "sessions",
                 "totalUsers",
                 "engagedSessions",
-                "engagementRate",
                 "keyEvents",
                 "averageSessionDuration",
             ],
-            dimensions=["pagePath", "pageTitle"],
+            dimensions=["pagePath"],
             limit=10000,
             order_bys=[{"metric": {"metricName": "screenPageViews"}, "desc": True}],
+            dimension_filter=self._merge_dimension_filters(country=country),
         )
         snapshot_date = date.today()
-        by_page_path: dict[str, dict[str, object]] = {}
+        mapped: list[dict[str, object]] = []
         for row in rows:
             page_path = str(row.get("pagePath") or "/")
             sessions = Decimal(row.get("sessions", 0))
             key_events = Decimal(row.get("keyEvents", 0))
-            current = by_page_path.get(page_path)
-            if current is None:
-                by_page_path[page_path] = {
+            mapped.append(
+                {
                     "snapshot_date": snapshot_date.isoformat(),
                     "page_path": page_path,
-                    "page_title": str(row.get("pageTitle")) if row.get("pageTitle") else None,
+                    "page_title": None,
                     "screen_page_views": Decimal(row.get("screenPageViews", 0)),
                     "sessions": sessions,
                     "total_users": Decimal(row.get("totalUsers", 0)),
                     "engaged_sessions": Decimal(row.get("engagedSessions", 0)),
                     "key_events": key_events,
                     "avg_session_duration_seconds": Decimal(row.get("averageSessionDuration", 0)),
-                }
-                continue
-
-            current["screen_page_views"] = Decimal(current["screen_page_views"]) + Decimal(
-                row.get("screenPageViews", 0)
-            )
-            current["sessions"] = Decimal(current["sessions"]) + sessions
-            # totalUsers is non-additive across segmented rows; summing can overcount.
-            current["total_users"] = max(
-                Decimal(current["total_users"]),
-                Decimal(row.get("totalUsers", 0)),
-            )
-            current["engaged_sessions"] = Decimal(current["engaged_sessions"]) + Decimal(
-                row.get("engagedSessions", 0)
-            )
-            current["key_events"] = Decimal(current["key_events"]) + key_events
-            current["avg_session_duration_seconds"] = max(
-                Decimal(current["avg_session_duration_seconds"]),
-                Decimal(row.get("averageSessionDuration", 0)),
-            )
-            if not current.get("page_title") and row.get("pageTitle"):
-                current["page_title"] = str(row.get("pageTitle"))
-
-        mapped: list[dict[str, object]] = []
-        for row in by_page_path.values():
-            sessions = Decimal(row["sessions"])
-            engaged_sessions = Decimal(row["engaged_sessions"])
-            key_events = Decimal(row["key_events"])
-            mapped.append(
-                {
-                    **row,
                     "engagement_rate": (
-                        engaged_sessions / sessions if sessions > 0 else Decimal("0")
+                        Decimal(row.get("engagedSessions", 0)) / sessions
+                        if sessions > 0
+                        else Decimal("0")
                     ),
                     "key_event_rate": key_events / sessions if sessions > 0 else Decimal("0"),
                 }
             )
         return mapped
 
-    def _fetch_geo_breakdown(self, days_back: int = 30) -> list[dict[str, object]]:
+    def _fetch_geo_breakdown(
+        self, days_back: int = 30, country: str | None = None
+    ) -> list[dict[str, object]]:
         rows = self.ga_client.run_report(
             start_date=f"{days_back}daysAgo",
             end_date="today",
@@ -247,6 +525,7 @@ class MarketingWebAnalyticsService:
             dimensions=["country", "region", "city"],
             limit=5000,
             order_bys=[{"metric": {"metricName": "sessions"}, "desc": True}],
+            dimension_filter=self._merge_dimension_filters(country=country),
         )
         snapshot_date = date.today()
         mapped: list[dict[str, object]] = []
@@ -270,6 +549,98 @@ class MarketingWebAnalyticsService:
             )
         return mapped
 
+    def _fetch_demographics_breakdown(
+        self, days_back: int = 30, country: str | None = None
+    ) -> list[MarketingDemographicRow]:
+        rows = self.ga_client.run_report(
+            start_date=f"{days_back}daysAgo",
+            end_date="today",
+            metrics=["sessions", "totalUsers", "engagedSessions", "engagementRate", "keyEvents"],
+            dimensions=["userAgeBracket", "userGender"],
+            limit=2000,
+            order_bys=[{"metric": {"metricName": "sessions"}, "desc": True}],
+            dimension_filter=self._merge_dimension_filters(country=country),
+        )
+        today = date.today()
+        mapped: list[MarketingDemographicRow] = []
+        for row in rows:
+            mapped.append(
+                MarketingDemographicRow(
+                    snapshot_date=today,
+                    age_bracket=str(row.get("userAgeBracket") or "unknown"),
+                    gender=str(row.get("userGender") or "unknown"),
+                    sessions=Decimal(row.get("sessions", 0)),
+                    total_users=Decimal(row.get("totalUsers", 0)),
+                    engaged_sessions=Decimal(row.get("engagedSessions", 0)),
+                    key_events=Decimal(row.get("keyEvents", 0)),
+                    engagement_rate=Decimal(row.get("engagementRate", 0)),
+                )
+            )
+        return mapped
+
+    def _fetch_device_breakdown(
+        self, days_back: int = 30, country: str | None = None
+    ) -> list[MarketingDeviceRow]:
+        rows = self.ga_client.run_report(
+            start_date=f"{days_back}daysAgo",
+            end_date="today",
+            metrics=["sessions", "totalUsers", "engagedSessions", "engagementRate", "keyEvents"],
+            dimensions=["deviceCategory"],
+            limit=100,
+            order_bys=[{"metric": {"metricName": "sessions"}, "desc": True}],
+            dimension_filter=self._merge_dimension_filters(country=country),
+        )
+        today = date.today()
+        return [
+            MarketingDeviceRow(
+                snapshot_date=today,
+                device_category=str(row.get("deviceCategory") or "unknown"),
+                sessions=Decimal(row.get("sessions", 0)),
+                total_users=Decimal(row.get("totalUsers", 0)),
+                engaged_sessions=Decimal(row.get("engagedSessions", 0)),
+                key_events=Decimal(row.get("keyEvents", 0)),
+                engagement_rate=Decimal(row.get("engagementRate", 0)),
+            )
+            for row in rows
+        ]
+
+    def _fetch_internal_site_search_terms(
+        self,
+        days_back: int = 30,
+        limit: int = 20,
+        country: str | None = None,
+    ) -> list[MarketingInternalSiteSearchTerm]:
+        rows = self.ga_client.run_report(
+            start_date=f"{days_back}daysAgo",
+            end_date="today",
+            metrics=["eventCount", "totalUsers"],
+            dimensions=["searchTerm"],
+            limit=max(limit, 1),
+            order_bys=[{"metric": {"metricName": "eventCount"}, "desc": True}],
+            dimension_filter=self._merge_dimension_filters(
+                country=country,
+                additional_filter={
+                    "filter": {
+                        "fieldName": "eventName",
+                        "stringFilter": {"matchType": "EXACT", "value": "view_search_results"},
+                    }
+                },
+            ),
+        )
+        mapped: list[MarketingInternalSiteSearchTerm] = []
+        for row in rows:
+            search_term = str(row.get("searchTerm") or "").strip()
+            if not search_term or search_term == "(not set)":
+                continue
+            mapped.append(
+                MarketingInternalSiteSearchTerm(
+                    search_term=search_term,
+                    event_count=Decimal(row.get("eventCount", 0)),
+                    total_users=Decimal(row.get("totalUsers", 0)),
+                )
+            )
+        return mapped
+
     def run_sync(self) -> MarketingWebAnalyticsSyncResult:
         self._assert_configuration()
         now = datetime.now(UTC)
@@ -284,57 +655,26 @@ class MarketingWebAnalyticsService:
         )
         run_id = str(sync_run.get("id") or "")
         try:
-            channel_breakdown = self._fetch_daily_channel_breakdown(days_back=800)
-            pages = self._fetch_top_landing_pages(limit=20)
+            daily_rows = self._fetch_daily_totals(days_back=800)
+            channel_rows = self._fetch_channel_totals(days_back=800)
+            country_rows = self._fetch_country_totals(days_back=800)
+            pages = self._fetch_top_landing_pages(days_back=30, limit=20)
             events = self._fetch_top_events(limit=20)
             page_activity = self._fetch_page_activity_breakdown(days_back=30)
             geo_breakdown = self._fetch_geo_breakdown(days_back=30)
-            by_date: dict[date, dict[str, Decimal]] = {}
-            for row in channel_breakdown:
-                snapshot_date = row["snapshot_date"]  # type: ignore[index]
-                if snapshot_date not in by_date:
-                    by_date[snapshot_date] = {
-                        "sessions": Decimal("0"),
-                        "total_users": Decimal("0"),
-                        "engaged_sessions": Decimal("0"),
-                        "key_events": Decimal("0"),
-                    }
-                day_bucket = by_date[snapshot_date]
-                day_bucket["sessions"] += row["sessions"]  # type: ignore[index]
-                day_bucket["total_users"] += row["total_users"]  # type: ignore[index]
-                day_bucket["engaged_sessions"] += row["engaged_sessions"]  # type: ignore[index]
-                day_bucket["key_events"] += row["key_events"]  # type: ignore[index]
+            try:
+                demographics = self._fetch_demographics_breakdown(days_back=30)
+            except Exception:
+                demographics = []
+            try:
+                devices = self._fetch_device_breakdown(days_back=30)
+            except Exception:
+                devices = []
+            try:
+                internal_terms = self._fetch_internal_site_search_terms(days_back=30, limit=40)
+            except Exception:
+                internal_terms = []
 
-            daily_rows = [
-                {
-                    "snapshot_date": snapshot_date.isoformat(),
-                    "sessions": values["sessions"],
-                    "total_users": values["total_users"],
-                    "engaged_sessions": values["engaged_sessions"],
-                    "engagement_rate": (
-                        values["engaged_sessions"] / values["sessions"]
-                        if values["sessions"] > 0
-                        else Decimal("0")
-                    ),
-                    "key_events": values["key_events"],
-                    "source_medium": "all",
-                    "default_channel_group": "all",
-                }
-                for snapshot_date, values in sorted(by_date.items(), key=lambda item: item[0])
-            ]
-            channel_rows = [
-                {
-                    "snapshot_date": row["snapshot_date"].isoformat(),  # type: ignore[index]
-                    "source_medium": row["source_medium"],
-                    "default_channel_group": row["default_channel_group"],
-                    "sessions": row["sessions"],
-                    "total_users": row["total_users"],
-                    "engaged_sessions": row["engaged_sessions"],
-                    "engagement_rate": row["engagement_rate"],
-                    "key_events": row["key_events"],
-                }
-                for row in channel_breakdown
-            ]
             page_rows = [
                 {
                     "snapshot_date": item.snapshot_date.isoformat(),
@@ -357,21 +697,66 @@ class MarketingWebAnalyticsService:
                 }
                 for item in events
             ]
+            demographic_rows = [
+                {
+                    "snapshot_date": item.snapshot_date.isoformat(),
+                    "age_bracket": item.age_bracket,
+                    "gender": item.gender,
+                    "sessions": item.sessions,
+                    "total_users": item.total_users,
+                    "engaged_sessions": item.engaged_sessions,
+                    "key_events": item.key_events,
+                    "engagement_rate": item.engagement_rate,
+                }
+                for item in demographics
+            ]
+            device_rows = [
+                {
+                    "snapshot_date": item.snapshot_date.isoformat(),
+                    "device_category": item.device_category,
+                    "sessions": item.sessions,
+                    "total_users": item.total_users,
+                    "engaged_sessions": item.engaged_sessions,
+                    "key_events": item.key_events,
+                    "engagement_rate": item.engagement_rate,
+                }
+                for item in devices
+            ]
+            internal_search_rows = [
+                {
+                    "snapshot_date": date.today().isoformat(),
+                    "search_term": item.search_term,
+                    "event_count": item.event_count,
+                    "total_users": item.total_users,
+                }
+                for item in internal_terms
+            ]
+            overview_period_rows = self._build_overview_period_rows(as_of_date=date.today())
 
             self.repository.upsert_daily_snapshots(daily_rows)
             self.repository.upsert_channel_snapshots(channel_rows)
+            self.repository.upsert_country_snapshots(country_rows)
             self.repository.upsert_landing_page_snapshots(page_rows)
             self.repository.upsert_event_snapshots(event_rows)
             self.repository.upsert_page_activity_snapshots(page_activity)
             self.repository.upsert_geo_snapshots(geo_breakdown)
+            self.repository.upsert_demographic_snapshots(demographic_rows)
+            self.repository.upsert_device_snapshots(device_rows)
+            self.repository.upsert_internal_search_snapshots(internal_search_rows)
+            self.repository.upsert_overview_period_summaries(overview_period_rows)
 
             records_processed = (
                 len(daily_rows)
                 + len(channel_rows)
+                + len(country_rows)
                 + len(page_rows)
                 + len(event_rows)
                 + len(page_activity)
                 + len(geo_breakdown)
+                + len(demographic_rows)
+                + len(device_rows)
+                + len(internal_search_rows)
+                + len(overview_period_rows)
             )
             self.repository.update_sync_run(
                 run_id,
@@ -493,27 +878,116 @@ class MarketingWebAnalyticsService:
             engagement_rate=Decimal("0"),
         )
 
-    @staticmethod
-    def _summary_from_trend(
-        trend: list[MarketingTimeSeriesPoint],
+    def _fetch_daily_trend_live(
+        self,
+        *,
+        days_back: int = 800,
+        country: str | None = None,
+    ) -> list[MarketingTimeSeriesPoint]:
+        rows = self.ga_client.run_report(
+            start_date=f"{days_back}daysAgo",
+            end_date="today",
+            metrics=["sessions", "totalUsers", "engagedSessions", "keyEvents"],
+            dimensions=["date"],
+            limit=max(days_back + 5, 100),
+            order_bys=[
+                {
+                    "dimension": {"dimensionName": "date", "orderType": "ALPHANUMERIC"},
+                    "desc": False,
+                }
+            ],
+            dimension_filter=self._merge_dimension_filters(country=country),
+        )
+        points: list[MarketingTimeSeriesPoint] = []
+        for row in rows:
+            raw_date = str(row.get("date") or "")
+            if not raw_date:
+                continue
+            snapshot_date = _parse_snapshot_date(raw_date)
+            sessions = Decimal(str(row.get("sessions") or 0))
+            engaged_sessions = Decimal(str(row.get("engagedSessions") or 0))
+            points.append(
+                MarketingTimeSeriesPoint(
+                    snapshot_date=snapshot_date,
+                    sessions=sessions,
+                    total_users=Decimal(str(row.get("totalUsers") or 0)),
+                    engaged_sessions=engaged_sessions,
+                    key_events=Decimal(str(row.get("keyEvents") or 0)),
+                    engagement_rate=engaged_sessions / sessions if sessions > 0 else Decimal("0"),
+                )
+            )
+        return points
+
+    def _fetch_period_summary_live(
+        self,
+        *,
         start_date: date,
         end_date: date,
+        country: str | None = None,
     ) -> _PeriodSummary:
-        scoped = [point for point in trend if start_date <= point.snapshot_date <= end_date]
-        if not scoped:
-            return MarketingWebAnalyticsService._empty_summary()
-        sessions = sum((point.sessions for point in scoped), Decimal("0"))
-        users = sum((point.total_users for point in scoped), Decimal("0"))
-        engaged_sessions = sum((point.engaged_sessions for point in scoped), Decimal("0"))
-        key_events = sum((point.key_events for point in scoped), Decimal("0"))
-        engagement_rate = engaged_sessions / sessions if sessions > 0 else Decimal("0")
+        rows = self.ga_client.run_report(
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+            metrics=["sessions", "totalUsers", "engagedSessions", "keyEvents"],
+            dimensions=[],
+            limit=1,
+            dimension_filter=self._merge_dimension_filters(country=country),
+        )
+        if not rows:
+            return self._empty_summary()
+        row = rows[0]
+        sessions = Decimal(str(row.get("sessions") or 0))
+        engaged_sessions = Decimal(str(row.get("engagedSessions") or 0))
         return _PeriodSummary(
             sessions=sessions,
-            users=users,
+            users=Decimal(str(row.get("totalUsers") or 0)),
             engaged_sessions=engaged_sessions,
-            key_events=key_events,
-            engagement_rate=engagement_rate,
+            key_events=Decimal(str(row.get("keyEvents") or 0)),
+            engagement_rate=engaged_sessions / sessions if sessions > 0 else Decimal("0"),
         )
+
+    def _build_overview_period_rows(self, *, as_of_date: date) -> list[dict[str, object]]:
+        windows = {
+            "current_30d": (as_of_date - timedelta(days=29), as_of_date),
+            "previous_30d": (as_of_date - timedelta(days=59), as_of_date - timedelta(days=30)),
+            "year_ago_30d": (as_of_date - timedelta(days=394), as_of_date - timedelta(days=365)),
+            "today": (as_of_date, as_of_date),
+            "yesterday": (as_of_date - timedelta(days=1), as_of_date - timedelta(days=1)),
+        }
+        rows: list[dict[str, object]] = []
+        for summary_key, (start_date, end_date) in windows.items():
+            summary = self._fetch_period_summary_live(start_date=start_date, end_date=end_date)
+            rows.append(
+                {
+                    "as_of_date": as_of_date.isoformat(),
+                    "summary_key": summary_key,
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                    "sessions": summary.sessions,
+                    "total_users": summary.users,
+                    "engaged_sessions": summary.engaged_sessions,
+                    "key_events": summary.key_events,
+                    "engagement_rate": summary.engagement_rate,
+                }
+            )
+        return rows
+
+    def _latest_overview_period_summaries(self, *, as_of_date: date) -> dict[str, _PeriodSummary]:
+        rows = self.repository.list_latest_overview_period_summaries(limit=20)
+        filtered = [row for row in rows if str(row.get("as_of_date")) == as_of_date.isoformat()]
+        summaries: dict[str, _PeriodSummary] = {}
+        for row in filtered:
+            key = str(row.get("summary_key") or "")
+            if not key:
+                continue
+            summaries[key] = _PeriodSummary(
+                sessions=Decimal(str(row.get("sessions") or 0)),
+                users=Decimal(str(row.get("total_users") or 0)),
+                engaged_sessions=Decimal(str(row.get("engaged_sessions") or 0)),
+                key_events=Decimal(str(row.get("key_events") or 0)),
+                engagement_rate=Decimal(str(row.get("engagement_rate") or 0)),
+            )
+        return summaries
 
     def _load_daily_trend(self, run_sync: bool) -> list[MarketingTimeSeriesPoint]:
         rows = self.repository.list_latest_daily_snapshots(limit=900)
@@ -577,27 +1051,20 @@ class MarketingWebAnalyticsService:
             for row in filtered
         ]
 
-    def _latest_channels(self, limit: int) -> list[MarketingChannelPerformance]:
-        rows = self.repository.list_latest_channels(limit=max(limit * 4, 40))
-        if not rows:
-            return []
-        latest_date = str(rows[0].get("snapshot_date"))
-        filtered = [row for row in rows if str(row.get("snapshot_date")) == latest_date][:limit]
-        return [
-            MarketingChannelPerformance(
-                channel_name=str(row.get("default_channel_group") or "Unassigned"),
-                sessions=Decimal(str(row.get("sessions") or 0)),
-                total_users=Decimal(str(row.get("total_users") or 0)),
-                engagement_rate=Decimal(str(row.get("engagement_rate") or 0)),
-                key_events=Decimal(str(row.get("key_events") or 0)),
-            )
-            for row in filtered
-        ]
-
     @staticmethod
     def _is_itinerary_page(page_path: str) -> bool:
         lowered = page_path.lower()
         return "itinerary" in lowered or "/trip/" in lowered
+
+    @staticmethod
+    def _is_lookbook_page(page_path: str) -> bool:
+        lowered = page_path.lower()
+        return "lookbook" in lowered or "/about/lookbooks" in lowered
+
+    @staticmethod
+    def _is_destination_page(page_path: str) -> bool:
+        lowered = page_path.lower()
+        return "destination" in lowered or "destinations" in lowered
 
     @staticmethod
     def _quality_score(
@@ -609,6 +1076,20 @@ class MarketingWebAnalyticsService:
             + (engagement_rate * Decimal("0.3"))
             + (traffic_component * Decimal("0.15"))
         )
+
+    @staticmethod
+    def _is_marketing_focus_page(page_path: str) -> bool:
+        lowered = page_path.lower()
+        excluded_patterns = (
+            "/contact/thank-you",
+            "/popups/",
+            "forget-password",
+            "/default",
+            "/login",
+            "/signin",
+            "/register",
+        )
+        return not any(pattern in lowered for pattern in excluded_patterns)
 
     def _latest_page_activity_rows(
         self,
@@ -660,6 +1141,73 @@ class MarketingWebAnalyticsService:
             )
         return latest_date, mapped
 
+    @staticmethod
+    def _map_page_activity_rows(
+        rows: list[dict[str, object]],
+        *,
+        snapshot_date: date,
+        page_path_contains: str | None = None,
+        limit: int = 100,
+    ) -> list[MarketingPageActivityRow]:
+        lowered_filter = (page_path_contains or "").strip().lower()
+        mapped: list[MarketingPageActivityRow] = []
+        for row in rows:
+            page_path = str(row.get("page_path") or "/")
+            if lowered_filter and lowered_filter not in page_path.lower():
+                continue
+            sessions = Decimal(str(row.get("sessions") or 0))
+            engagement_rate = Decimal(str(row.get("engagement_rate") or 0))
+            key_event_rate = Decimal(str(row.get("key_event_rate") or 0))
+            mapped.append(
+                MarketingPageActivityRow(
+                    snapshot_date=snapshot_date,
+                    page_path=page_path,
+                    page_title=str(row.get("page_title")) if row.get("page_title") else None,
+                    screen_page_views=Decimal(str(row.get("screen_page_views") or 0)),
+                    sessions=sessions,
+                    total_users=Decimal(str(row.get("total_users") or 0)),
+                    engaged_sessions=Decimal(str(row.get("engaged_sessions") or 0)),
+                    key_events=Decimal(str(row.get("key_events") or 0)),
+                    engagement_rate=engagement_rate,
+                    key_event_rate=key_event_rate,
+                    avg_session_duration_seconds=(
+                        Decimal(str(row.get("avg_session_duration_seconds")))
+                        if row.get("avg_session_duration_seconds") is not None
+                        else None
+                    ),
+                    quality_score=MarketingWebAnalyticsService._quality_score(
+                        sessions=sessions,
+                        engagement_rate=engagement_rate,
+                        key_event_rate=key_event_rate,
+                    ),
+                    is_itinerary_page=MarketingWebAnalyticsService._is_itinerary_page(page_path),
+                )
+            )
+        sorted_rows = sorted(mapped, key=lambda item: item.screen_page_views, reverse=True)
+        return sorted_rows[:limit]
+
+    @staticmethod
+    def _map_geo_rows(
+        rows: list[dict[str, object]],
+        *,
+        snapshot_date: date,
+    ) -> list[MarketingGeoRow]:
+        return [
+            MarketingGeoRow(
+                snapshot_date=snapshot_date,
+                country=str(row.get("country") or "Unknown"),
+                region=str(row.get("region")) if row.get("region") else None,
+                city=str(row.get("city")) if row.get("city") else None,
+                sessions=Decimal(str(row.get("sessions") or 0)),
+                total_users=Decimal(str(row.get("total_users") or 0)),
+                engaged_sessions=Decimal(str(row.get("engaged_sessions") or 0)),
+                key_events=Decimal(str(row.get("key_events") or 0)),
+                engagement_rate=Decimal(str(row.get("engagement_rate") or 0)),
+                key_event_rate=Decimal(str(row.get("key_event_rate") or 0)),
+            )
+            for row in rows
+        ]
+
     def _latest_geo_rows(self, *, limit: int = 200) -> tuple[date | None, list[MarketingGeoRow]]:
         rows = self.repository.list_latest_geo(limit=max(limit * 2, 300))
         if not rows:
@@ -687,29 +1235,122 @@ class MarketingWebAnalyticsService:
         ]
         return latest_date, mapped
 
-    def get_overview(self, *, run_sync: bool = True) -> MarketingOverview:
-        self._assert_configuration()
-        trend = self._load_daily_trend(run_sync=run_sync)
-        latest_date = trend[-1].snapshot_date if trend else date.today()
-        current = self._summary_from_trend(trend, latest_date - timedelta(days=29), latest_date)
-        previous = self._summary_from_trend(
-            trend,
-            latest_date - timedelta(days=59),
-            latest_date - timedelta(days=30),
-        )
-        year_ago = self._summary_from_trend(
-            trend,
-            latest_date - timedelta(days=394),
-            latest_date - timedelta(days=365),
-        )
-        today_summary = self._summary_from_trend(trend, latest_date, latest_date)
-        yesterday_summary = self._summary_from_trend(
-            trend, latest_date - timedelta(days=1), latest_date - timedelta(days=1)
-        )
+    def _latest_demographics(self, *, limit: int = 50) -> list[MarketingDemographicRow]:
+        rows = self.repository.list_latest_demographics(limit=max(limit * 2, 80))
+        if not rows:
+            return []
+        latest_date = str(rows[0].get("snapshot_date"))
+        filtered = [row for row in rows if str(row.get("snapshot_date")) == latest_date][:limit]
+        snapshot_date = datetime.strptime(latest_date, "%Y-%m-%d").date()
+        return [
+            MarketingDemographicRow(
+                snapshot_date=snapshot_date,
+                age_bracket=str(row.get("age_bracket") or "unknown"),
+                gender=str(row.get("gender") or "unknown"),
+                sessions=Decimal(str(row.get("sessions") or 0)),
+                total_users=Decimal(str(row.get("total_users") or 0)),
+                engaged_sessions=Decimal(str(row.get("engaged_sessions") or 0)),
+                key_events=Decimal(str(row.get("key_events") or 0)),
+                engagement_rate=Decimal(str(row.get("engagement_rate") or 0)),
+            )
+            for row in filtered
+        ]
 
-        landing_pages = self._latest_pages(limit=10)
-        channels = self._latest_channels(limit=6)
-        events = self._latest_events(limit=10)
+    def _latest_devices(self, *, limit: int = 10) -> list[MarketingDeviceRow]:
+        rows = self.repository.list_latest_devices(limit=max(limit * 2, 20))
+        if not rows:
+            return []
+        latest_date = str(rows[0].get("snapshot_date"))
+        filtered = [row for row in rows if str(row.get("snapshot_date")) == latest_date][:limit]
+        snapshot_date = datetime.strptime(latest_date, "%Y-%m-%d").date()
+        return [
+            MarketingDeviceRow(
+                snapshot_date=snapshot_date,
+                device_category=str(row.get("device_category") or "unknown"),
+                sessions=Decimal(str(row.get("sessions") or 0)),
+                total_users=Decimal(str(row.get("total_users") or 0)),
+                engaged_sessions=Decimal(str(row.get("engaged_sessions") or 0)),
+                key_events=Decimal(str(row.get("key_events") or 0)),
+                engagement_rate=Decimal(str(row.get("engagement_rate") or 0)),
+            )
+            for row in filtered
+        ]
+
+    def _latest_internal_search_terms(
+        self,
+        *,
+        limit: int = 20,
+    ) -> list[MarketingInternalSiteSearchTerm]:
+        rows = self.repository.list_latest_internal_search_terms(limit=max(limit * 2, 40))
+        if not rows:
+            return []
+        latest_date = str(rows[0].get("snapshot_date"))
+        filtered = [row for row in rows if str(row.get("snapshot_date")) == latest_date][:limit]
+        return [
+            MarketingInternalSiteSearchTerm(
+                search_term=str(row.get("search_term") or ""),
+                event_count=Decimal(str(row.get("event_count") or 0)),
+                total_users=Decimal(str(row.get("total_users") or 0)),
+            )
+            for row in filtered
+            if str(row.get("search_term") or "").strip()
+        ]
+
+    def get_overview(
+        self, *, run_sync: bool = True, country: str | None = None
+    ) -> MarketingOverview:
+        self._assert_configuration()
+        scoped_country = self._normalize_country_scope(country)
+
+        if scoped_country:
+            trend = self._fetch_daily_trend_live(days_back=800, country=scoped_country)
+            latest_date = trend[-1].snapshot_date if trend else date.today()
+            current = self._fetch_period_summary_live(
+                start_date=latest_date - timedelta(days=29),
+                end_date=latest_date,
+                country=scoped_country,
+            )
+            previous = self._fetch_period_summary_live(
+                start_date=latest_date - timedelta(days=59),
+                end_date=latest_date - timedelta(days=30),
+                country=scoped_country,
+            )
+            year_ago = self._fetch_period_summary_live(
+                start_date=latest_date - timedelta(days=394),
+                end_date=latest_date - timedelta(days=365),
+                country=scoped_country,
+            )
+            today_summary = self._fetch_period_summary_live(
+                start_date=latest_date,
+                end_date=latest_date,
+                country=scoped_country,
+            )
+            yesterday_summary = self._fetch_period_summary_live(
+                start_date=latest_date - timedelta(days=1),
+                end_date=latest_date - timedelta(days=1),
+                country=scoped_country,
+            )
+            landing_pages = self._fetch_top_landing_pages(
+                days_back=30,
+                limit=10,
+                country=scoped_country,
+            )
+            channels = self._fetch_channel_window_totals(
+                days_back=30, limit=6, country=scoped_country
+            )
+            events = self._fetch_top_events(limit=10, days_back=30, country=scoped_country)
+        else:
+            trend = self._load_daily_trend(run_sync=run_sync)
+            latest_date = trend[-1].snapshot_date if trend else date.today()
+            period_summaries = self._latest_overview_period_summaries(as_of_date=latest_date)
+            current = period_summaries.get("current_30d", self._empty_summary())
+            previous = period_summaries.get("previous_30d", self._empty_summary())
+            year_ago = period_summaries.get("year_ago_30d", self._empty_summary())
+            today_summary = period_summaries.get("today", self._empty_summary())
+            yesterday_summary = period_summaries.get("yesterday", self._empty_summary())
+            landing_pages = self._latest_pages(limit=10)
+            channels = self._fetch_channel_window_totals(days_back=30, limit=6)
+            events = self._latest_events(limit=10)
 
         return MarketingOverview(
             kpis=self._build_kpis(current, previous, year_ago, today_summary, yesterday_summary),
@@ -722,38 +1363,143 @@ class MarketingWebAnalyticsService:
             timezone=self.settings.marketing_default_timezone,
         )
 
-    def get_search_performance(self) -> MarketingSearchPerformance:
-        _ = self._load_daily_trend(run_sync=False)
-        channels = self._latest_channels(limit=8)
-        pages = self._latest_pages(limit=15)
-        is_gsc_connected = bool((self.settings.google_gsc_site_url or "").strip())
+    def get_search_performance(
+        self,
+        *,
+        days_back: int = 30,
+        country: str | None = None,
+    ) -> MarketingSearchPerformance:
+        scoped_country = self._normalize_country_scope(country)
+        if days_back == 30 and not scoped_country:
+            _ = self._load_daily_trend(run_sync=False)
+            channels = self._fetch_channel_window_totals(days_back=30, limit=8)
+            pages = self._latest_pages(limit=15)
+            internal_terms = self._latest_internal_search_terms(limit=20)
+            source_mix = self._fetch_source_medium_performance(days_back=30, limit=25)
+        else:
+            self._assert_configuration()
+            channels = self._fetch_channel_window_totals(
+                days_back=days_back,
+                limit=8,
+                country=scoped_country,
+            )
+            pages = self._fetch_top_landing_pages(
+                days_back=days_back,
+                limit=15,
+                country=scoped_country,
+            )
+            internal_terms = self._fetch_internal_site_search_terms(
+                days_back=days_back,
+                limit=20,
+                country=scoped_country,
+            )
+            source_mix = self._fetch_source_medium_performance(
+                days_back=days_back,
+                limit=25,
+                country=scoped_country,
+            )
+        referral_sources = sorted(
+            [row for row in source_mix if row.medium.lower() == "referral"],
+            key=lambda row: row.sessions,
+            reverse=True,
+        )[:10]
+        valuable_source_candidates = [row for row in source_mix if row.sessions >= 20]
+        if not valuable_source_candidates:
+            valuable_source_candidates = source_mix
+        top_valuable_sources = sorted(
+            valuable_source_candidates,
+            key=lambda row: (row.value_score, row.key_events, row.sessions),
+            reverse=True,
+        )[:10]
         return MarketingSearchPerformance(
-            search_console_connected=is_gsc_connected,
-            connection_message=(
-                "Search Console is not connected yet. Connect it "
-                "to unlock query-level SEO insights."
-                if not is_gsc_connected
-                else "Search Console is connected."
-            ),
             top_landing_pages=pages,
             channels=channels,
+            source_mix=source_mix,
+            referral_sources=referral_sources,
+            top_valuable_sources=top_valuable_sources,
+            internal_site_search_terms=internal_terms,
+        )
+
+    def get_search_console_insights(
+        self,
+        *,
+        days_back: int = 30,
+        country: str | None = None,
+    ) -> MarketingSearchConsoleInsights:
+        scoped_country = self._normalize_country_scope(country)
+        self._assert_configuration()
+        is_gsc_connected = bool((self.settings.google_gsc_site_url or "").strip())
+        organic_landing_pages = self._fetch_top_landing_pages(
+            days_back=days_back,
+            limit=20,
+            country=scoped_country,
+        )
+        internal_terms = self._fetch_internal_site_search_terms(
+            days_back=days_back,
+            limit=30,
+            country=scoped_country,
+        )
+        connection_message = (
+            (
+                "Search Console is not connected yet. Connect it to unlock query impressions, "
+                "CTR, and rankings."
+            )
+            if not is_gsc_connected
+            else (
+                "Search Console is connected. Query ingestion is configured for dedicated "
+                "keyword insights."
+            )
+        )
+        return MarketingSearchConsoleInsights(
+            search_console_connected=is_gsc_connected,
+            connection_message=connection_message,
+            data_mode="live_gsc" if is_gsc_connected else "proxy",
             top_queries=[],
+            organic_landing_pages=organic_landing_pages,
+            internal_site_search_terms=internal_terms,
         )
 
     def get_page_activity(
-        self, *, page_path_contains: str | None = None, limit: int = 100
+        self,
+        *,
+        page_path_contains: str | None = None,
+        limit: int = 100,
+        days_back: int = 30,
+        country: str | None = None,
     ) -> MarketingPageActivity:
-        _ = self._load_daily_trend(run_sync=True)
-        snapshot_date, all_pages = self._latest_page_activity_rows(
-            limit=limit,
-            page_path_contains=page_path_contains,
-        )
+        scoped_country = self._normalize_country_scope(country)
+        if days_back == 30 and not scoped_country:
+            _ = self._load_daily_trend(run_sync=True)
+            snapshot_date, all_pages = self._latest_page_activity_rows(
+                limit=limit,
+                page_path_contains=page_path_contains,
+            )
+        else:
+            self._assert_configuration()
+            snapshot_date = date.today()
+            raw_rows = self._fetch_page_activity_breakdown(
+                days_back=days_back, country=scoped_country
+            )
+            all_pages = self._map_page_activity_rows(
+                raw_rows,
+                snapshot_date=snapshot_date,
+                page_path_contains=page_path_contains,
+                limit=limit,
+            )
         pages_with_volume = [page for page in all_pages if page.sessions >= 20]
-        best_pages = sorted(pages_with_volume, key=lambda page: page.quality_score, reverse=True)[
-            :10
+        ranked_pages = [
+            page for page in pages_with_volume if self._is_marketing_focus_page(page.page_path)
         ]
-        worst_pages = sorted(pages_with_volume, key=lambda page: page.quality_score)[:10]
+        worst_pages = sorted(ranked_pages, key=lambda page: page.quality_score)[:10]
+        best_pages = sorted(ranked_pages, key=lambda page: page.quality_score, reverse=True)[:10]
         itinerary_pages = [page for page in all_pages if page.is_itinerary_page][:25]
+        lookbook_pages = [page for page in all_pages if self._is_lookbook_page(page.page_path)][:25]
+        destination_pages = [
+            page for page in all_pages if self._is_destination_page(page.page_path)
+        ][:25]
+        if page_path_contains:
+            lookbook_pages = []
+            destination_pages = []
         return MarketingPageActivity(
             snapshot_date=snapshot_date,
             metric_guide=(
@@ -763,22 +1509,54 @@ class MarketingWebAnalyticsService:
             best_pages=best_pages,
             worst_pages=worst_pages,
             itinerary_pages=itinerary_pages,
+            lookbook_pages=lookbook_pages,
+            destination_pages=destination_pages,
             all_pages=all_pages[:50],
         )
 
-    def get_geo_breakdown(self) -> MarketingGeoBreakdown:
-        _ = self._load_daily_trend(run_sync=True)
-        snapshot_date, rows = self._latest_geo_rows(limit=300)
-        top_countries = sorted(rows, key=lambda row: row.sessions, reverse=True)[:12]
+    def get_geo_breakdown(
+        self,
+        *,
+        days_back: int = 30,
+        country: str | None = None,
+    ) -> MarketingGeoBreakdown:
+        scoped_country = self._normalize_country_scope(country)
+        if days_back == 30 and not scoped_country:
+            _ = self._load_daily_trend(run_sync=True)
+            snapshot_date, rows = self._latest_geo_rows(limit=300)
+            top_countries = self._fetch_country_window_totals(days_back=30, limit=12)
+            demographics = self._latest_demographics(limit=50)
+            devices = self._latest_devices(limit=10)
+        else:
+            self._assert_configuration()
+            snapshot_date = date.today()
+            raw_rows = self._fetch_geo_breakdown(days_back=days_back, country=scoped_country)
+            rows = self._map_geo_rows(raw_rows, snapshot_date=snapshot_date)
+            top_countries = self._fetch_country_window_totals(
+                days_back=days_back,
+                limit=12,
+                country=scoped_country,
+            )
+            demographics = self._fetch_demographics_breakdown(
+                days_back=days_back, country=scoped_country
+            )
+            devices = self._fetch_device_breakdown(days_back=days_back, country=scoped_country)
         return MarketingGeoBreakdown(
             snapshot_date=snapshot_date,
             rows=rows,
             top_countries=top_countries,
+            demographics=demographics,
+            devices=devices,
         )
 
-    def get_event_catalog(self) -> MarketingEventCatalog:
-        _ = self._load_daily_trend(run_sync=True)
-        events = self._latest_events(limit=50)
+    def get_event_catalog(self, *, country: str | None = None) -> MarketingEventCatalog:
+        scoped_country = self._normalize_country_scope(country)
+        if scoped_country:
+            self._assert_configuration()
+            events = self._fetch_top_events(limit=50, days_back=30, country=scoped_country)
+        else:
+            _ = self._load_daily_trend(run_sync=True)
+            events = self._latest_events(limit=50)
         snapshot_date = events[0].snapshot_date if events else None
         catalog_items: list[MarketingEventCatalogItem] = []
         for event in events:
@@ -804,12 +1582,16 @@ class MarketingWebAnalyticsService:
             )
         return MarketingEventCatalog(snapshot_date=snapshot_date, events=catalog_items)
 
-    def get_ai_insights(self) -> list[MarketingAiInsight]:
-        overview = self.get_overview(run_sync=False)
+    def get_ai_insights(self, *, country: str | None = None) -> list[MarketingAiInsight]:
+        scoped_country = self._normalize_country_scope(country)
+        overview = self.get_overview(run_sync=False, country=scoped_country)
+        page_activity = self.get_page_activity(days_back=30, country=scoped_country)
+        geo = self.get_geo_breakdown(days_back=30, country=scoped_country)
+        search = self.get_search_performance(days_back=30, country=scoped_country)
         insights: list[MarketingAiInsight] = []
 
         low_engagement_pages = sorted(
-            [p for p in overview.top_landing_pages if p.engagement_rate < Decimal("0.45")],
+            [page for page in overview.top_landing_pages if page.engagement_rate < Decimal("0.45")],
             key=lambda item: item.sessions,
             reverse=True,
         )
@@ -819,45 +1601,321 @@ class MarketingWebAnalyticsService:
                 MarketingAiInsight(
                     insight_id="improve-low-engagement-page",
                     priority="high",
-                    title="Improve a high-traffic landing page with low engagement",
+                    category="content",
+                    focus_area="fix",
+                    title="Fix a high-traffic landing page before buying more traffic",
                     summary=(
-                        f"{page.landing_page} is attracting traffic but engagement is trailing. "
-                        "This is likely a messaging or page intent mismatch."
+                        f"{page.landing_page} is bringing in volume, but user intent is not being "
+                        "converted into engagement."
                     ),
+                    target_label=page.landing_page,
+                    target_path=page.landing_page,
+                    owner_hint="marketing",
+                    primary_metric_label="Engagement Rate",
+                    impact_score=Decimal("94"),
+                    confidence_score=Decimal("89"),
                     evidence_points=[
                         f"Sessions: {int(page.sessions)}",
                         f"Engagement rate: {round(float(page.engagement_rate) * 100, 1)}%",
+                        f"Key events: {int(page.key_events)}",
                     ],
                     recommended_actions=[
-                        "Refresh above-the-fold value proposition and CTA hierarchy.",
-                        "Align headline and hero copy to the intent of top entry channels.",
-                        "Run two headline+CTA variants for one business week "
-                        "and compare key events.",
+                        "Rewrite the headline, hero value proposition, and primary CTA "
+                        "to match the acquisition intent landing here.",
+                        "Reduce above-the-fold distraction and give one obvious next step.",
+                        "Treat this page as a live experiment candidate for one-week copy "
+                        "and CTA testing.",
                     ],
                 )
             )
 
-        top_channel = overview.channels[0] if overview.channels else None
-        if top_channel:
+        weak_channel = next(
+            (
+                channel
+                for channel in sorted(
+                    overview.channels,
+                    key=lambda item: item.sessions,
+                    reverse=True,
+                )
+                if channel.sessions >= 100
+                and channel.engagement_rate < Decimal("0.05")
+                and channel.key_events == 0
+            ),
+            None,
+        )
+        if weak_channel:
             insights.append(
                 MarketingAiInsight(
-                    insight_id="double-down-top-channel",
-                    priority="medium",
-                    title="Double down on highest-yield acquisition channel",
+                    insight_id="repair-low-quality-acquisition-channel",
+                    priority="high",
+                    category="acquisition",
+                    focus_area="cut",
+                    title="Trim or rebuild a high-volume channel that is wasting attention",
                     summary=(
-                        f"{top_channel.channel_name} is currently your largest traffic driver. "
-                        "Treat it as the control channel for short-cycle growth experiments."
+                        f"{weak_channel.channel_name} is driving traffic, but it is not producing "
+                        "meaningful engagement or conversion signals."
                     ),
+                    target_label=weak_channel.channel_name,
+                    target_path=None,
+                    owner_hint="marketing",
+                    primary_metric_label="Channel Engagement Rate",
+                    impact_score=Decimal("91"),
+                    confidence_score=Decimal("92"),
                     evidence_points=[
-                        f"Sessions: {int(top_channel.sessions)}",
-                        f"Key events: {int(top_channel.key_events)}",
-                        f"Engagement rate: {round(float(top_channel.engagement_rate) * 100, 1)}%",
+                        f"Sessions: {int(weak_channel.sessions)}",
+                        f"Engagement rate: {round(float(weak_channel.engagement_rate) * 100, 1)}%",
+                        f"Key events: {int(weak_channel.key_events)}",
                     ],
                     recommended_actions=[
-                        "Create a dedicated campaign/topic cluster "
-                        "for the top two converting landing pages.",
-                        "Mirror winning messaging in email and "
-                        "outbound sequences for sales alignment.",
+                        "Audit campaign targeting, placements, audience quality, and "
+                        "landing-page match for this channel.",
+                        "Pause the weakest traffic slices until creative and intent "
+                        "alignment are repaired.",
+                        "Move spend toward pages and campaigns already showing better "
+                        "engagement quality.",
+                    ],
+                )
+            )
+
+        mobile_device = next(
+            (device for device in geo.devices if device.device_category.lower() == "mobile"),
+            None,
+        )
+        desktop_device = next(
+            (device for device in geo.devices if device.device_category.lower() == "desktop"),
+            None,
+        )
+        total_device_sessions = sum((device.sessions for device in geo.devices), Decimal("0"))
+        if (
+            mobile_device
+            and desktop_device
+            and total_device_sessions > 0
+            and mobile_device.sessions / total_device_sessions >= Decimal("0.6")
+            and desktop_device.engagement_rate - mobile_device.engagement_rate >= Decimal("0.05")
+        ):
+            insights.append(
+                MarketingAiInsight(
+                    insight_id="mobile-experience-priority",
+                    priority="high",
+                    category="device",
+                    focus_area="optimize",
+                    title="Mobile is the dominant experience, but it is underperforming desktop",
+                    summary=(
+                        "Most sessions are coming through mobile, so even moderate mobile friction "
+                        "is suppressing total marketing return."
+                    ),
+                    target_label="Mobile experience",
+                    target_path=None,
+                    owner_hint="web",
+                    primary_metric_label="Mobile Engagement Rate",
+                    impact_score=Decimal("90"),
+                    confidence_score=Decimal("86"),
+                    evidence_points=[
+                        f"Mobile sessions: {int(mobile_device.sessions)}",
+                        "Mobile engagement: "
+                        f"{round(float(mobile_device.engagement_rate) * 100, 1)}%",
+                        "Desktop engagement: "
+                        f"{round(float(desktop_device.engagement_rate) * 100, 1)}%",
+                    ],
+                    recommended_actions=[
+                        "Audit mobile landing pages for speed, CTA prominence, and form friction.",
+                        "Check whether high-volume mobile pages bury the primary next step.",
+                        "Prioritize mobile-specific hero, copy-density, "
+                        "and button hierarchy tests.",
+                    ],
+                )
+            )
+
+        localization_market = next(
+            (
+                row
+                for row in sorted(
+                    geo.top_countries,
+                    key=lambda item: item.sessions * item.engagement_rate,
+                    reverse=True,
+                )
+                if row.country not in {"United States", "(not set)"}
+                and row.sessions >= 100
+                and row.engagement_rate >= Decimal("0.15")
+            ),
+            None,
+        )
+        if localization_market:
+            insights.append(
+                MarketingAiInsight(
+                    insight_id="localize-proven-market",
+                    priority="medium",
+                    category="geography",
+                    focus_area="localize",
+                    title="Localize messaging for a market already showing qualified interest",
+                    summary=(
+                        f"{localization_market.country} is showing enough engagement "
+                        "quality to justify "
+                        "market-specific creative or destination emphasis."
+                    ),
+                    target_label=localization_market.country,
+                    target_path=None,
+                    owner_hint="marketing",
+                    primary_metric_label="Country Engagement Rate",
+                    impact_score=Decimal("77"),
+                    confidence_score=Decimal("75"),
+                    evidence_points=[
+                        f"Sessions: {int(localization_market.sessions)}",
+                        "Engagement rate: "
+                        f"{round(float(localization_market.engagement_rate) * 100, 1)}%",
+                    ],
+                    recommended_actions=[
+                        "Create one localized campaign/message set tailored to this market.",
+                        "Feature the destinations or offers that map to the "
+                        "strongest demand signals.",
+                        "Use this market as a test bed before broader international rollout.",
+                    ],
+                )
+            )
+
+        search_tokens = {
+            token
+            for page in search.top_landing_pages
+            for token in str(page.landing_page).lower().replace("-", " ").split("/")
+            if len(token) >= 4
+        }
+        site_search_gap = next(
+            (
+                term
+                for term in search.internal_site_search_terms
+                if term.total_users >= 5
+                and not any(token in search_tokens for token in term.search_term.lower().split())
+            ),
+            None,
+        )
+        if site_search_gap:
+            insights.append(
+                MarketingAiInsight(
+                    insight_id="build-content-for-internal-demand",
+                    priority="medium",
+                    category="intent",
+                    focus_area="scale",
+                    title="Build content around what visitors are explicitly searching for",
+                    summary=(
+                        f"Visitors are repeatedly searching for '{site_search_gap.search_term}', "
+                        "which suggests demand is ahead of content or navigation support."
+                    ),
+                    target_label=site_search_gap.search_term,
+                    target_path=None,
+                    owner_hint="marketing",
+                    primary_metric_label="Internal Search Demand",
+                    impact_score=Decimal("74"),
+                    confidence_score=Decimal("81"),
+                    evidence_points=[
+                        f"Search events: {int(site_search_gap.event_count)}",
+                        f"Users: {int(site_search_gap.total_users)}",
+                    ],
+                    recommended_actions=[
+                        "Create or strengthen a page, module, or CTA path "
+                        "aligned to this search intent.",
+                        "Expose this topic higher in navigation or landing-page internal links.",
+                        "Track whether adding direct content reduces repeat internal search loops.",
+                    ],
+                )
+            )
+
+        destination_winner = next(
+            (
+                page
+                for page in sorted(
+                    page_activity.destination_pages,
+                    key=lambda item: item.quality_score * item.sessions,
+                    reverse=True,
+                )
+                if page.sessions >= 75 and page.quality_score >= Decimal("0.2")
+            ),
+            None,
+        )
+        if destination_winner:
+            insights.append(
+                MarketingAiInsight(
+                    insight_id="scale-high-signal-destination",
+                    priority="medium",
+                    category="content",
+                    focus_area="scale",
+                    title="Scale a destination page that is already proving demand quality",
+                    summary=(
+                        f"{destination_winner.page_path} is showing "
+                        "stronger-than-average signal quality "
+                        "and is a good candidate for campaign amplification."
+                    ),
+                    target_label=destination_winner.page_path,
+                    target_path=destination_winner.page_path,
+                    owner_hint="sales",
+                    primary_metric_label="Destination Quality Score",
+                    impact_score=Decimal("79"),
+                    confidence_score=Decimal("78"),
+                    evidence_points=[
+                        f"Sessions: {int(destination_winner.sessions)}",
+                        "Quality score: "
+                        f"{round(float(destination_winner.quality_score) * 100, 1)}%",
+                        "Engagement rate: "
+                        f"{round(float(destination_winner.engagement_rate) * 100, 1)}%",
+                    ],
+                    recommended_actions=[
+                        "Feature this destination in paid and lifecycle campaigns.",
+                        "Build itinerary, offer, or advisor CTA pathways "
+                        "off this destination page.",
+                        "Use this page's framing as a benchmark for lower-performing "
+                        "destination pages.",
+                    ],
+                )
+            )
+
+        removable_page = next(
+            (
+                page
+                for page in sorted(
+                    page_activity.worst_pages,
+                    key=lambda item: item.sessions,
+                    reverse=True,
+                )
+                if page.sessions >= 50
+                and page.engagement_rate <= Decimal("0.08")
+                and page.key_event_rate == 0
+            ),
+            None,
+        )
+        if removable_page:
+            insights.append(
+                MarketingAiInsight(
+                    insight_id="deprioritize-low-value-page",
+                    priority="medium",
+                    category="content",
+                    focus_area="cut",
+                    title=(
+                        "Deprioritize or consolidate a page "
+                        "that is absorbing traffic without payoff"
+                    ),
+                    summary=(
+                        f"{removable_page.page_path} is taking attention "
+                        "but not creating measurable "
+                        "commercial value."
+                    ),
+                    target_label=removable_page.page_path,
+                    target_path=removable_page.page_path,
+                    owner_hint="web",
+                    primary_metric_label="Page Quality Score",
+                    impact_score=Decimal("72"),
+                    confidence_score=Decimal("83"),
+                    evidence_points=[
+                        f"Sessions: {int(removable_page.sessions)}",
+                        "Engagement rate: "
+                        f"{round(float(removable_page.engagement_rate) * 100, 1)}%",
+                        "Key event rate: "
+                        f"{round(float(removable_page.key_event_rate) * 100, 1)}%",
+                    ],
+                    recommended_actions=[
+                        "Decide whether this page should be upgraded, redirected, "
+                        "or removed from promotion.",
+                        "Stop sending paid or internal promotional traffic here "
+                        "until its role is clarified.",
+                        "If the page must remain, give it one clear CTA and simpler page intent.",
                     ],
                 )
             )
@@ -868,22 +1926,32 @@ class MarketingWebAnalyticsService:
                 MarketingAiInsight(
                     insight_id="track-primary-conversion-events",
                     priority="high",
-                    title="Tighten conversion instrumentation",
-                    summary=(
-                        "Primary lead-conversion events are not "
-                        "clearly visible in top tracked events."
+                    category="measurement",
+                    focus_area="instrument",
+                    title=(
+                        "Tighten conversion instrumentation before "
+                        "trusting optimization decisions"
                     ),
+                    summary=(
+                        "Primary lead-conversion events are still not "
+                        "clearly visible, which limits "
+                        "the reliability of every downstream marketing decision."
+                    ),
+                    target_label="Primary conversion tracking",
+                    target_path=None,
+                    owner_hint="analytics",
+                    primary_metric_label="Primary Conversion Events",
+                    impact_score=Decimal("96"),
+                    confidence_score=Decimal("95"),
                     evidence_points=[
-                        "Key conversion events did not appear in top event list.",
-                        "Strategic funnel analysis is constrained "
-                        "without clean event instrumentation.",
+                        "Key conversion events did not appear in the top event list.",
+                        "Strategic funnel analysis is constrained without clean instrumentation.",
                     ],
                     recommended_actions=[
-                        "Define one canonical primary conversion event "
-                        "for marketing-qualified leads.",
-                        "Define one canonical secondary conversion event "
-                        "for high-intent engagement.",
-                        "Reconcile GA event naming with sales handoff stages.",
+                        "Define one canonical primary conversion event for qualified leads.",
+                        "Define one secondary intent event for strong-but-not-final "
+                        "buying signals.",
+                        "Align GA4 event naming with sales handoff stages and CRM expectations.",
                     ],
                 )
             )
@@ -893,21 +1961,34 @@ class MarketingWebAnalyticsService:
                 MarketingAiInsight(
                     insight_id="baseline-stable",
                     priority="low",
-                    title="Baseline is stable; prioritize focused experiments",
+                    category="content",
+                    focus_area="optimize",
+                    title="Baseline is stable; use this period for disciplined experiments",
                     summary=(
-                        "Top-level website behavior appears stable. "
-                        "Use short experiment loops to find lift."
+                        "No major structural risks are visible right now, so this is a good time "
+                        "to run focused tests instead of broad changes."
                     ),
+                    target_label="Website baseline",
+                    target_path=None,
+                    owner_hint="marketing",
+                    primary_metric_label="Overall Stability",
+                    impact_score=Decimal("48"),
+                    confidence_score=Decimal("67"),
                     evidence_points=[
                         "No major structural signal risk detected in current GA4 snapshot."
                     ],
                     recommended_actions=[
-                        "Test one value proposition update on top landing page.",
+                        "Test one value proposition update on a top landing page.",
                         "Add conversion-step diagnostics to validate funnel friction points.",
                     ],
                 )
             )
-        return insights
+
+        priority_rank = {"high": 0, "medium": 1, "low": 2}
+        return sorted(
+            insights,
+            key=lambda item: (priority_rank[item.priority], -item.impact_score),
+        )[:8]
 
     def get_health(self) -> MarketingHealth:
         configured = bool(

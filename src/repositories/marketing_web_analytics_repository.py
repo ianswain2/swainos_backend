@@ -39,7 +39,17 @@ class MarketingWebAnalyticsRepository:
             table="marketing_web_analytics_channels_daily",
             payload=rows,
             upsert=True,
-            on_conflict="snapshot_date,source_medium,default_channel_group",
+            on_conflict="snapshot_date,default_channel_group",
+        )
+
+    def upsert_country_snapshots(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        return self._chunked_upsert(
+            table="marketing_web_analytics_country_daily",
+            rows=rows,
+            on_conflict="snapshot_date,country",
+            chunk_size=500,
         )
 
     def upsert_landing_page_snapshots(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -82,6 +92,46 @@ class MarketingWebAnalyticsRepository:
             chunk_size=500,
         )
 
+    def upsert_demographic_snapshots(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        return self._chunked_upsert(
+            table="marketing_web_analytics_demographics_daily",
+            rows=rows,
+            on_conflict="snapshot_date,age_bracket,gender",
+            chunk_size=500,
+        )
+
+    def upsert_device_snapshots(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        return self._chunked_upsert(
+            table="marketing_web_analytics_devices_daily",
+            rows=rows,
+            on_conflict="snapshot_date,device_category",
+            chunk_size=200,
+        )
+
+    def upsert_internal_search_snapshots(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        return self._chunked_upsert(
+            table="marketing_web_analytics_internal_search_daily",
+            rows=rows,
+            on_conflict="snapshot_date,search_term",
+            chunk_size=500,
+        )
+
+    def upsert_overview_period_summaries(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        return self.client.insert(
+            table="marketing_web_analytics_overview_period_summaries",
+            payload=rows,
+            upsert=True,
+            on_conflict="as_of_date,summary_key",
+        )
+
     def list_daily_snapshots(self, days_back: int = 120) -> list[dict[str, Any]]:
         start_date = (date.today() - timedelta(days=max(days_back, 1))).isoformat()
         rows, _ = self.client.select(
@@ -105,18 +155,6 @@ class MarketingWebAnalyticsRepository:
             ),
             filters=[("source_medium", "eq.all"), ("default_channel_group", "eq.all")],
             order="snapshot_date.desc",
-            limit=max(limit, 1),
-        )
-        return rows
-
-    def list_latest_channels(self, limit: int = 25) -> list[dict[str, Any]]:
-        rows, _ = self.client.select(
-            table="marketing_web_analytics_channels_daily",
-            select=(
-                "snapshot_date,source_medium,default_channel_group,sessions,total_users,"
-                "engagement_rate,key_events"
-            ),
-            order="snapshot_date.desc,sessions.desc",
             limit=max(limit, 1),
         )
         return rows
@@ -170,6 +208,51 @@ class MarketingWebAnalyticsRepository:
                 "engagement_rate,key_event_rate"
             ),
             order="snapshot_date.desc,sessions.desc",
+            limit=max(limit, 1),
+        )
+        return rows
+
+    def list_latest_demographics(self, limit: int = 50) -> list[dict[str, Any]]:
+        rows, _ = self.client.select(
+            table="marketing_web_analytics_demographics_daily",
+            select=(
+                "snapshot_date,age_bracket,gender,sessions,total_users,engaged_sessions,key_events,"
+                "engagement_rate"
+            ),
+            order="snapshot_date.desc,sessions.desc",
+            limit=max(limit, 1),
+        )
+        return rows
+
+    def list_latest_devices(self, limit: int = 10) -> list[dict[str, Any]]:
+        rows, _ = self.client.select(
+            table="marketing_web_analytics_devices_daily",
+            select=(
+                "snapshot_date,device_category,sessions,total_users,engaged_sessions,key_events,"
+                "engagement_rate"
+            ),
+            order="snapshot_date.desc,sessions.desc",
+            limit=max(limit, 1),
+        )
+        return rows
+
+    def list_latest_internal_search_terms(self, limit: int = 30) -> list[dict[str, Any]]:
+        rows, _ = self.client.select(
+            table="marketing_web_analytics_internal_search_daily",
+            select="snapshot_date,search_term,event_count,total_users",
+            order="snapshot_date.desc,event_count.desc",
+            limit=max(limit, 1),
+        )
+        return rows
+
+    def list_latest_overview_period_summaries(self, limit: int = 12) -> list[dict[str, Any]]:
+        rows, _ = self.client.select(
+            table="marketing_web_analytics_overview_period_summaries",
+            select=(
+                "as_of_date,summary_key,start_date,end_date,sessions,total_users,engaged_sessions,"
+                "key_events,engagement_rate"
+            ),
+            order="as_of_date.desc,summary_key.asc",
             limit=max(limit, 1),
         )
         return rows

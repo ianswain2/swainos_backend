@@ -30,7 +30,7 @@ def test_payments_out_summary(client):
     response = client.get("/api/v1/payments-out/summary")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["data"][0]["outstandingAmount"] == 400
+    assert payload["data"][0]["totalOutstandingAmount"] == 400
     assert payload["pagination"]["totalItems"] == 1
 
 

@@ -21,6 +21,8 @@ class Meta(BaseSchema):
     source: str
     time_window: str
     calculation_version: str
+    market_scope: Optional[str] = None
+    market_label: Optional[str] = None
     currency: Optional[str] = None
     data_status: Optional[str] = None
     is_stale: Optional[bool] = None

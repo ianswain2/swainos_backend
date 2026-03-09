@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import List
 
 import pytest
 from fastapi.testclient import TestClient
 
 from src.api.dependencies import get_revenue_bookings_service
 from src.main import create_app
+from src.schemas.common import Lineage
 from src.schemas.revenue_bookings import (
     BookingDetail,
     BookingForecastPoint,
@@ -17,7 +17,6 @@ from src.schemas.revenue_bookings import (
     DepositSummary,
     PaymentOutSummary,
 )
-from src.schemas.common import Lineage
 
 
 class FakeRevenueBookingsService:
@@ -56,43 +55,48 @@ class FakeRevenueBookingsService:
             confirmation_number="CONF-1",
         )
 
-    def get_cashflow_summary(self, *_: object) -> List[CashFlowSummary]:
+    def get_cashflow_summary(self, *_: object) -> list[CashFlowSummary]:
         return [
             CashFlowSummary(
                 currency_code="USD", cash_in_total=1000, cash_out_total=600, net_cash_total=400
             )
         ]
 
-    def get_cashflow_timeseries(self, *_: object) -> List[CashFlowTimeseriesPoint]:
+    def get_cashflow_timeseries(self, *_: object) -> list[CashFlowTimeseriesPoint]:
         return [
             CashFlowTimeseriesPoint(
                 period_start=date(2026, 2, 1), cash_in=1000, cash_out=600, net_cash=400
             )
         ]
 
-    def get_deposit_summary(self, *_: object) -> List[DepositSummary]:
+    def get_deposit_summary(self, *_: object) -> list[DepositSummary]:
         return [
             DepositSummary(
                 currency_code="USD",
                 total_deposits=1000,
                 received_deposits=1000,
                 outstanding_deposits=0,
+                available_cash_after_liability=1000,
             )
         ]
 
-    def get_payments_out_summary(self, *_: object) -> List[PaymentOutSummary]:
+    def get_payments_out_summary(self, *_: object) -> list[PaymentOutSummary]:
         return [
             PaymentOutSummary(
                 currency_code="USD",
-                total_invoices=800,
-                paid_amount=400,
-                outstanding_amount=400,
+                open_line_count=8,
+                total_outstanding_amount=400,
+                due_30d_amount=200,
             )
         ]
 
-    def get_booking_forecasts(self, *_: object) -> List[BookingForecastPoint]:
+    def get_booking_forecasts(self, *_: object) -> list[BookingForecastPoint]:
         return [
-            BookingForecastPoint(period_start=date(2026, 3, 1), projected_bookings=5, confidence=0.7)
+            BookingForecastPoint(
+                period_start=date(2026, 3, 1),
+                projected_bookings=5,
+                confidence=0.7,
+            )
         ]
 
 
