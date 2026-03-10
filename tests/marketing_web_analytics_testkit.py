@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -20,6 +20,14 @@ class FakeMarketingRepository:
         self.device_rows: dict[tuple[str, str], dict[str, Any]] = {}
         self.internal_search_rows: dict[tuple[str, str], dict[str, Any]] = {}
         self.overview_rows: dict[tuple[str, str], dict[str, Any]] = {}
+        self.search_console_daily_rows: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self.search_console_query_rows: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        self.search_console_page_rows: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        self.search_console_page_query_rows: dict[
+            tuple[str, str, str, str, str], dict[str, Any]
+        ] = {}
+        self.search_console_country_rows: dict[tuple[str, str], dict[str, Any]] = {}
+        self.search_console_device_rows: dict[tuple[str, str], dict[str, Any]] = {}
         self.sync_runs: list[dict[str, Any]] = []
 
     def _upsert(
@@ -149,6 +157,589 @@ class FakeMarketingRepository:
             key=lambda row: row["sessions"],
             reverse=True,
         )
+
+    def upsert_search_console_daily(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for row in rows:
+            key = (row["snapshot_date"], row["country_scope"], row["device_scope"])
+            self._upsert(self.search_console_daily_rows, key, row)
+        return rows
+
+    def upsert_search_console_query_daily(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for row in rows:
+            key = (
+                row["snapshot_date"],
+                row["query"],
+                row["country_scope"],
+                row["device_scope"],
+            )
+            self._upsert(self.search_console_query_rows, key, row)
+        return rows
+
+    def upsert_search_console_page_daily(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for row in rows:
+            key = (
+                row["snapshot_date"],
+                row["page_path"],
+                row["country_scope"],
+                row["device_scope"],
+            )
+            self._upsert(self.search_console_page_rows, key, row)
+        return rows
+
+    def upsert_search_console_page_query_daily(
+        self, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        for row in rows:
+            key = (
+                row["snapshot_date"],
+                row["page_path"],
+                row["query"],
+                row["country_scope"],
+                row["device_scope"],
+            )
+            self._upsert(self.search_console_page_query_rows, key, row)
+        return rows
+
+    def upsert_search_console_country_daily(
+        self, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        for row in rows:
+            key = (row["snapshot_date"], row["country"])
+            self._upsert(self.search_console_country_rows, key, row)
+        return rows
+
+    def upsert_search_console_device_daily(
+        self, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        for row in rows:
+            key = (row["snapshot_date"], row["device"])
+            self._upsert(self.search_console_device_rows, key, row)
+        return rows
+
+    def latest_search_console_snapshot_date(
+        self,
+        *,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> date | None:
+        rows = [
+            row
+            for row in self.search_console_daily_rows.values()
+            if row["country_scope"] == country_scope and row["device_scope"] == device_scope
+        ]
+        if not rows:
+            return None
+        latest = max(rows, key=lambda row: row["snapshot_date"])
+        return date.fromisoformat(str(latest["snapshot_date"]))
+
+    def get_search_console_insights_rollup(
+        self,
+        *,
+        days_back: int,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> dict[str, Any]:
+        latest = self.latest_search_console_snapshot_date(
+            country_scope=country_scope,
+            device_scope=device_scope,
+        )
+        if latest is None:
+            return {
+                "as_of_date": None,
+                "freshness_days": None,
+                "query_row_count": 0,
+                "overview": {
+                    "total_clicks": 0,
+                    "total_impressions": 0,
+                    "average_ctr": 0,
+                    "average_position": 0,
+                    "clicks_delta_pct": None,
+                    "impressions_delta_pct": None,
+                    "ctr_delta_pct": None,
+                    "position_delta": None,
+                },
+                "top_queries": [],
+                "top_pages": [],
+                "country_breakdown": [],
+                "device_breakdown": [],
+                "opportunities": [],
+                "challenges": [],
+            }
+
+        normalized_days = max(days_back, 1)
+        current_start = latest - timedelta(days=normalized_days - 1)
+        previous_start = current_start - timedelta(days=normalized_days)
+        previous_end = current_start - timedelta(days=1)
+
+        scoped_daily = [
+            row
+            for row in self.search_console_daily_rows.values()
+            if row["country_scope"] == country_scope and row["device_scope"] == device_scope
+        ]
+        current_daily = [
+            row
+            for row in scoped_daily
+            if current_start <= date.fromisoformat(str(row["snapshot_date"])) <= latest
+        ]
+        previous_daily = [
+            row
+            for row in scoped_daily
+            if previous_start <= date.fromisoformat(str(row["snapshot_date"])) <= previous_end
+        ]
+
+        def _rollup(rows: list[dict[str, Any]]) -> tuple[Decimal, Decimal, Decimal]:
+            clicks = sum((Decimal(str(row.get("clicks") or 0)) for row in rows), Decimal("0"))
+            impressions = sum(
+                (Decimal(str(row.get("impressions") or 0)) for row in rows),
+                Decimal("0"),
+            )
+            position_weight = sum(
+                (
+                    Decimal(str(row.get("average_position") or 0))
+                    * Decimal(str(row.get("impressions") or 0))
+                    for row in rows
+                ),
+                Decimal("0"),
+            )
+            return clicks, impressions, position_weight
+
+        current_clicks, current_impressions, current_position_weight = _rollup(current_daily)
+        previous_clicks, previous_impressions, previous_position_weight = _rollup(previous_daily)
+        current_ctr = (
+            current_clicks / current_impressions if current_impressions > 0 else Decimal("0")
+        )
+        previous_ctr = (
+            previous_clicks / previous_impressions if previous_impressions > 0 else Decimal("0")
+        )
+        current_position = (
+            current_position_weight / current_impressions
+            if current_impressions > 0
+            else Decimal("0")
+        )
+        previous_position = (
+            previous_position_weight / previous_impressions
+            if previous_impressions > 0
+            else Decimal("0")
+        )
+
+        query_rollup: dict[str, dict[str, Any]] = {}
+        for row in self.search_console_query_rows.values():
+            if row["country_scope"] != country_scope or row["device_scope"] != device_scope:
+                continue
+            snapshot_date = date.fromisoformat(str(row["snapshot_date"]))
+            if snapshot_date < current_start or snapshot_date > latest:
+                continue
+            query = str(row["query"])
+            bucket = query_rollup.setdefault(
+                query,
+                {
+                    "query": query,
+                    "clicks": Decimal("0"),
+                    "impressions": Decimal("0"),
+                    "position_weight": Decimal("0"),
+                    "is_branded": bool(row.get("is_branded")),
+                },
+            )
+            clicks = Decimal(str(row.get("clicks") or 0))
+            impressions = Decimal(str(row.get("impressions") or 0))
+            bucket["clicks"] += clicks
+            bucket["impressions"] += impressions
+            bucket["position_weight"] += (
+                Decimal(str(row.get("average_position") or 0)) * impressions
+            )
+
+        top_queries = sorted(
+            query_rollup.values(),
+            key=lambda row: row["clicks"],
+            reverse=True,
+        )[:25]
+        top_queries_payload = [
+            {
+                "query": row["query"],
+                "clicks": row["clicks"],
+                "impressions": row["impressions"],
+                "ctr": (
+                    row["clicks"] / row["impressions"] if row["impressions"] > 0 else Decimal("0")
+                ),
+                "average_position": (
+                    row["position_weight"] / row["impressions"]
+                    if row["impressions"] > 0
+                    else Decimal("0")
+                ),
+                "is_branded": bool(row["is_branded"]),
+            }
+            for row in top_queries
+        ]
+
+        page_rollup: dict[str, dict[str, Decimal | str]] = {}
+        for row in self.search_console_page_rows.values():
+            if row["country_scope"] != country_scope or row["device_scope"] != device_scope:
+                continue
+            snapshot_date = date.fromisoformat(str(row["snapshot_date"]))
+            if snapshot_date < current_start or snapshot_date > latest:
+                continue
+            page_path = str(row["page_path"])
+            bucket = page_rollup.setdefault(
+                page_path,
+                {
+                    "page_path": page_path,
+                    "clicks": Decimal("0"),
+                    "impressions": Decimal("0"),
+                    "position_weight": Decimal("0"),
+                },
+            )
+            clicks = Decimal(str(row.get("clicks") or 0))
+            impressions = Decimal(str(row.get("impressions") or 0))
+            bucket["clicks"] = Decimal(str(bucket["clicks"])) + clicks
+            bucket["impressions"] = Decimal(str(bucket["impressions"])) + impressions
+            bucket["position_weight"] = Decimal(str(bucket["position_weight"])) + (
+                Decimal(str(row.get("average_position") or 0)) * impressions
+            )
+
+        top_pages = sorted(
+            page_rollup.values(), key=lambda row: Decimal(str(row["clicks"])), reverse=True
+        )[:25]
+        top_pages_payload = [
+            {
+                "page_path": str(row["page_path"]),
+                "clicks": Decimal(str(row["clicks"])),
+                "impressions": Decimal(str(row["impressions"])),
+                "ctr": (
+                    Decimal(str(row["clicks"])) / Decimal(str(row["impressions"]))
+                    if Decimal(str(row["impressions"])) > 0
+                    else Decimal("0")
+                ),
+                "average_position": (
+                    Decimal(str(row["position_weight"])) / Decimal(str(row["impressions"]))
+                    if Decimal(str(row["impressions"])) > 0
+                    else Decimal("0")
+                ),
+            }
+            for row in top_pages
+        ]
+
+        country_breakdown = []
+        if country_scope == "all":
+            for row in self.search_console_country_rows.values():
+                snapshot_date = date.fromisoformat(str(row["snapshot_date"]))
+                if snapshot_date < current_start or snapshot_date > latest:
+                    continue
+                impressions = Decimal(str(row.get("impressions") or 0))
+                clicks = Decimal(str(row.get("clicks") or 0))
+                country_breakdown.append(
+                    {
+                        "label": str(row["country"]),
+                        "clicks": clicks,
+                        "impressions": impressions,
+                        "ctr": clicks / impressions if impressions > 0 else Decimal("0"),
+                        "average_position": Decimal(str(row.get("average_position") or 0)),
+                    }
+                )
+            country_breakdown = sorted(
+                country_breakdown,
+                key=lambda row: Decimal(str(row["clicks"])),
+                reverse=True,
+            )[:12]
+
+        device_breakdown = []
+        if country_scope == "all":
+            for row in self.search_console_device_rows.values():
+                snapshot_date = date.fromisoformat(str(row["snapshot_date"]))
+                if snapshot_date < current_start or snapshot_date > latest:
+                    continue
+                impressions = Decimal(str(row.get("impressions") or 0))
+                clicks = Decimal(str(row.get("clicks") or 0))
+                device_breakdown.append(
+                    {
+                        "label": str(row["device"]),
+                        "clicks": clicks,
+                        "impressions": impressions,
+                        "ctr": clicks / impressions if impressions > 0 else Decimal("0"),
+                        "average_position": Decimal(str(row.get("average_position") or 0)),
+                    }
+                )
+            device_breakdown = sorted(
+                device_breakdown,
+                key=lambda row: Decimal(str(row["clicks"])),
+                reverse=True,
+            )[:8]
+
+        return {
+            "as_of_date": latest.isoformat(),
+            "freshness_days": (date.today() - latest).days,
+            "query_row_count": len(top_queries_payload),
+            "overview": {
+                "total_clicks": current_clicks,
+                "total_impressions": current_impressions,
+                "average_ctr": current_ctr,
+                "average_position": current_position,
+                "clicks_delta_pct": (
+                    (current_clicks - previous_clicks) / previous_clicks
+                    if previous_clicks > 0
+                    else None
+                ),
+                "impressions_delta_pct": (
+                    (current_impressions - previous_impressions) / previous_impressions
+                    if previous_impressions > 0
+                    else None
+                ),
+                "ctr_delta_pct": (
+                    (current_ctr - previous_ctr) / previous_ctr if previous_ctr > 0 else None
+                ),
+                "position_delta": (
+                    current_position - previous_position if previous_impressions > 0 else None
+                ),
+            },
+            "top_queries": top_queries_payload,
+            "top_pages": top_pages_payload,
+            "country_breakdown": country_breakdown,
+            "device_breakdown": device_breakdown,
+            "opportunities": [],
+            "challenges": [],
+        }
+
+    def get_search_console_us_workspace_rollup(self, *, days_back: int) -> dict[str, Any]:
+        base = self.get_search_console_insights_rollup(
+            days_back=days_back,
+            country_scope="United States",
+            device_scope="all",
+        )
+        if base.get("as_of_date") is None:
+            return {
+                **base,
+                "market_benchmarks": [],
+                "query_intent_buckets": [],
+                "position_band_summary": [],
+            }
+
+        benchmarks: list[dict[str, Any]] = []
+        for label in ("United States", "Australia", "New Zealand", "South Africa"):
+            clicks = Decimal("0")
+            impressions = Decimal("0")
+            position_weight = Decimal("0")
+            for row in self.search_console_country_rows.values():
+                if str(row.get("country")) != label:
+                    continue
+                clicks += Decimal(str(row.get("clicks") or 0))
+                row_impressions = Decimal(str(row.get("impressions") or 0))
+                impressions += row_impressions
+                position_weight += Decimal(str(row.get("average_position") or 0)) * row_impressions
+            benchmarks.append(
+                {
+                    "market_label": label,
+                    "clicks": clicks,
+                    "impressions": impressions,
+                    "ctr": clicks / impressions if impressions > 0 else Decimal("0"),
+                    "average_position": (
+                        position_weight / impressions if impressions > 0 else Decimal("0")
+                    ),
+                }
+            )
+
+        return {
+            **base,
+            "top_queries": [
+                {
+                    **row,
+                    "intent_bucket": "core_travel_intent",
+                    "term_type": "short_tail",
+                    "position_band": "4-10",
+                }
+                for row in list(base.get("top_queries") or [])
+            ],
+            "market_benchmarks": benchmarks,
+            "query_intent_buckets": [
+                {
+                    "bucket_label": "core_travel_intent",
+                    "query_count": len(base.get("top_queries") or []),
+                    "clicks": sum(
+                        (
+                            Decimal(str(row.get("clicks") or 0))
+                            for row in list(base.get("top_queries") or [])
+                        ),
+                        Decimal("0"),
+                    ),
+                    "impressions": sum(
+                        (
+                            Decimal(str(row.get("impressions") or 0))
+                            for row in list(base.get("top_queries") or [])
+                        ),
+                        Decimal("0"),
+                    ),
+                    "average_ctr": Decimal("0.1"),
+                }
+            ],
+            "position_band_summary": [
+                {
+                    "band_label": "4-10",
+                    "query_count": len(base.get("top_queries") or []),
+                    "clicks": sum(
+                        (
+                            Decimal(str(row.get("clicks") or 0))
+                            for row in list(base.get("top_queries") or [])
+                        ),
+                        Decimal("0"),
+                    ),
+                    "impressions": sum(
+                        (
+                            Decimal(str(row.get("impressions") or 0))
+                            for row in list(base.get("top_queries") or [])
+                        ),
+                        Decimal("0"),
+                    ),
+                    "average_ctr": Decimal("0.1"),
+                }
+            ],
+        }
+
+    def get_search_console_page_profile_rollup(
+        self,
+        *,
+        days_back: int,
+        page_path: str,
+    ) -> dict[str, Any]:
+        base = self.get_search_console_insights_rollup(
+            days_back=days_back,
+            country_scope="United States",
+            device_scope="all",
+        )
+        page_rows = [
+            row
+            for row in self.search_console_page_rows.values()
+            if str(row.get("page_path")) == page_path
+            and str(row.get("country_scope")) == "United States"
+        ]
+        query_rows = [
+            row
+            for row in self.search_console_page_query_rows.values()
+            if str(row.get("page_path")) == page_path
+            and str(row.get("country_scope")) == "United States"
+        ]
+        total_clicks = sum(
+            (Decimal(str(row.get("clicks") or 0)) for row in page_rows),
+            Decimal("0"),
+        )
+        total_impressions = sum(
+            (Decimal(str(row.get("impressions") or 0)) for row in page_rows),
+            Decimal("0"),
+        )
+        position_weight = sum(
+            (
+                Decimal(str(row.get("average_position") or 0))
+                * Decimal(str(row.get("impressions") or 0))
+                for row in page_rows
+            ),
+            Decimal("0"),
+        )
+        return {
+            "page_path": page_path,
+            "as_of_date": base.get("as_of_date"),
+            "overview": {
+                "total_clicks": total_clicks,
+                "total_impressions": total_impressions,
+                "average_ctr": (
+                    total_clicks / total_impressions if total_impressions > 0 else Decimal("0")
+                ),
+                "average_position": (
+                    position_weight / total_impressions if total_impressions > 0 else Decimal("0")
+                ),
+            },
+            "daily_trend": [
+                {
+                    "snapshot_date": row.get("snapshot_date"),
+                    "clicks": row.get("clicks"),
+                    "impressions": row.get("impressions"),
+                    "ctr": row.get("ctr"),
+                    "average_position": row.get("average_position"),
+                }
+                for row in page_rows
+            ],
+            "top_queries": [
+                {
+                    "query": row.get("query"),
+                    "clicks": row.get("clicks"),
+                    "impressions": row.get("impressions"),
+                    "ctr": row.get("ctr"),
+                    "average_position": row.get("average_position"),
+                    "is_branded": False,
+                }
+                for row in query_rows[:20]
+            ],
+        }
+
+    def list_search_console_daily(
+        self,
+        *,
+        start_date: date,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in self.search_console_daily_rows.values()
+            if date.fromisoformat(str(row["snapshot_date"])) >= start_date
+            and row["country_scope"] == country_scope
+            and row["device_scope"] == device_scope
+        ]
+
+    def list_search_console_query_daily(
+        self,
+        *,
+        start_date: date,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in self.search_console_query_rows.values()
+            if date.fromisoformat(str(row["snapshot_date"])) >= start_date
+            and row["country_scope"] == country_scope
+            and row["device_scope"] == device_scope
+        ]
+
+    def list_search_console_page_daily(
+        self,
+        *,
+        start_date: date,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in self.search_console_page_rows.values()
+            if date.fromisoformat(str(row["snapshot_date"])) >= start_date
+            and row["country_scope"] == country_scope
+            and row["device_scope"] == device_scope
+        ]
+
+    def list_search_console_page_query_daily(
+        self,
+        *,
+        start_date: date,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in self.search_console_page_query_rows.values()
+            if date.fromisoformat(str(row["snapshot_date"])) >= start_date
+            and row["country_scope"] == country_scope
+            and row["device_scope"] == device_scope
+        ]
+
+    def list_search_console_country_daily(self, *, start_date: date) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in self.search_console_country_rows.values()
+            if date.fromisoformat(str(row["snapshot_date"])) >= start_date
+        ]
+
+    def list_search_console_device_daily(self, *, start_date: date) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in self.search_console_device_rows.values()
+            if date.fromisoformat(str(row["snapshot_date"])) >= start_date
+        ]
 
 
 class FakeMarketingGaClient:

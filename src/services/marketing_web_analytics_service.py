@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
+
+import httpx
 
 from src.core.config import get_settings
 from src.core.errors import BadRequestError
 from src.integrations.google_analytics_client import GoogleAnalyticsClient
+from src.integrations.google_search_console_client import GoogleSearchConsoleClient
 from src.repositories.marketing_web_analytics_repository import MarketingWebAnalyticsRepository
 from src.schemas.marketing_web_analytics import (
     MarketingAiInsight,
@@ -26,8 +30,20 @@ from src.schemas.marketing_web_analytics import (
     MarketingOverview,
     MarketingPageActivity,
     MarketingPageActivityRow,
+    MarketingSearchConsoleBreakdownRow,
+    MarketingSearchConsoleChallenge,
     MarketingSearchConsoleInsights,
+    MarketingSearchConsoleIntentBucket,
+    MarketingSearchConsoleIssue,
+    MarketingSearchConsoleMarketBenchmark,
+    MarketingSearchConsoleOpportunity,
+    MarketingSearchConsoleOverview,
+    MarketingSearchConsolePagePerformance,
+    MarketingSearchConsolePageProfile,
+    MarketingSearchConsolePageTrendPoint,
+    MarketingSearchConsolePositionBand,
     MarketingSearchPerformance,
+    MarketingSearchQuery,
     MarketingSourcePerformance,
     MarketingTimeSeriesPoint,
     MarketingTrackingEvent,
@@ -75,6 +91,13 @@ EVENT_DEFINITIONS: dict[
 
 
 MARKETING_ALL_SCOPE = "all"
+MARKETING_US_SCOPE = "United States"
+GSC_COUNTRY_EXPRESSIONS = {
+    "United States": "usa",
+    "Australia": "aus",
+    "New Zealand": "nzl",
+    "South Africa": "zaf",
+}
 
 
 class MarketingWebAnalyticsService:
@@ -85,6 +108,7 @@ class MarketingWebAnalyticsService:
     ) -> None:
         self.repository = repository
         self.ga_client = ga_client
+        self._gsc_client: GoogleSearchConsoleClient | None = None
         self.settings = get_settings()
 
     def _assert_configuration(self) -> None:
@@ -128,6 +152,256 @@ class MarketingWebAnalyticsService:
                 }
             }
         return country_filter or additional_filter
+
+    def _get_search_console_client(self) -> GoogleSearchConsoleClient:
+        if self._gsc_client is None:
+            self._gsc_client = GoogleSearchConsoleClient()
+        return self._gsc_client
+
+    def _assert_search_console_configuration(self) -> None:
+        if not (self.settings.google_service_account_key_json or "").strip():
+            raise BadRequestError(
+                "Google service account credentials are required for Search Console"
+            )
+        if not (self.settings.google_gsc_site_url or "").strip():
+            raise BadRequestError("GOOGLE_GSC_SITE_URL is required for Search Console")
+
+    @staticmethod
+    def _country_scope_label(country: str | None) -> str:
+        return country or MARKETING_ALL_SCOPE
+
+    @staticmethod
+    def _safe_rate(numerator: Decimal, denominator: Decimal) -> Decimal:
+        if denominator <= 0:
+            return Decimal("0")
+        return numerator / denominator
+
+    @staticmethod
+    def _weighted_average_position(
+        total_position_weight: Decimal, total_impressions: Decimal
+    ) -> Decimal:
+        if total_impressions <= 0:
+            return Decimal("0")
+        return total_position_weight / total_impressions
+
+    @staticmethod
+    def _is_branded_query(query: str, brand_terms: list[str]) -> bool:
+        normalized = query.strip().lower()
+        if not normalized:
+            return False
+        return any(term in normalized for term in brand_terms)
+
+    def _gsc_brand_terms(self) -> list[str]:
+        configured = os.getenv("MARKETING_SEARCH_CONSOLE_BRAND_TERMS", "").strip()
+        if configured:
+            return [term.strip().lower() for term in configured.split(",") if term.strip()]
+        return ["swain", "swain destinations", "swaindestinations"]
+
+    @staticmethod
+    def _parse_gsc_api_date(value: str | None) -> date | None:
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+
+    def _fetch_search_console_rows(
+        self,
+        *,
+        days_back: int,
+        dimensions: list[str],
+        country: str | None = None,
+        device: str | None = None,
+        row_limit: int = 25000,
+    ) -> list[dict[str, Any]]:
+        client = self._get_search_console_client()
+        today = date.today()
+        start_date = (today - timedelta(days=max(days_back - 1, 0))).isoformat()
+        end_date = today.isoformat()
+        country_filter_expression = (
+            GSC_COUNTRY_EXPRESSIONS.get(country, country.lower())
+            if country and country != MARKETING_ALL_SCOPE
+            else None
+        )
+        return client.query(
+            start_date=start_date,
+            end_date=end_date,
+            dimensions=dimensions,
+            country_filter=country_filter_expression,
+            device_filter=device,
+            row_limit=row_limit,
+        )
+
+    def _sync_search_console_snapshots(
+        self,
+        *,
+        days_back: int,
+        country: str | None = None,
+    ) -> None:
+        scoped_country = self._normalize_country_scope(country)
+        scope_label = self._country_scope_label(scoped_country)
+        brand_terms = self._gsc_brand_terms()
+
+        daily_rows = self._fetch_search_console_rows(
+            days_back=days_back,
+            dimensions=["date"],
+            country=scoped_country,
+        )
+        query_rows = self._fetch_search_console_rows(
+            days_back=days_back,
+            dimensions=["date", "query"],
+            country=scoped_country,
+        )
+        page_rows = self._fetch_search_console_rows(
+            days_back=days_back,
+            dimensions=["date", "page"],
+            country=scoped_country,
+        )
+        page_query_rows = self._fetch_search_console_rows(
+            days_back=days_back,
+            dimensions=["date", "page", "query"],
+            country=scoped_country,
+        )
+        country_rows = []
+        if scoped_country is None:
+            country_rows = self._fetch_search_console_rows(
+                days_back=days_back, dimensions=["date", "country"]
+            )
+        device_rows = self._fetch_search_console_rows(
+            days_back=days_back, dimensions=["date", "device"], country=scoped_country
+        )
+
+        upsert_daily: list[dict[str, Any]] = []
+        for row in daily_rows:
+            snapshot_date = self._parse_gsc_api_date(str(row.get("date") or ""))
+            if not snapshot_date:
+                continue
+            impressions = Decimal(row.get("impressions", 0))
+            clicks = Decimal(row.get("clicks", 0))
+            ctr = self._safe_rate(clicks, impressions)
+            upsert_daily.append(
+                {
+                    "snapshot_date": snapshot_date.isoformat(),
+                    "country_scope": scope_label,
+                    "device_scope": "all",
+                    "clicks": clicks,
+                    "impressions": impressions,
+                    "ctr": ctr,
+                    "average_position": Decimal(row.get("position", 0)),
+                }
+            )
+        self.repository.upsert_search_console_daily(upsert_daily)
+
+        upsert_queries: list[dict[str, Any]] = []
+        for row in query_rows:
+            snapshot_date = self._parse_gsc_api_date(str(row.get("date") or ""))
+            query = str(row.get("query") or "").strip()
+            if not snapshot_date or not query:
+                continue
+            impressions = Decimal(row.get("impressions", 0))
+            clicks = Decimal(row.get("clicks", 0))
+            upsert_queries.append(
+                {
+                    "snapshot_date": snapshot_date.isoformat(),
+                    "query": query,
+                    "country_scope": scope_label,
+                    "device_scope": "all",
+                    "clicks": clicks,
+                    "impressions": impressions,
+                    "ctr": self._safe_rate(clicks, impressions),
+                    "average_position": Decimal(row.get("position", 0)),
+                    "is_branded": self._is_branded_query(query, brand_terms),
+                }
+            )
+        self.repository.upsert_search_console_query_daily(upsert_queries)
+
+        upsert_pages: list[dict[str, Any]] = []
+        for row in page_rows:
+            snapshot_date = self._parse_gsc_api_date(str(row.get("date") or ""))
+            page_path = str(row.get("page") or "").strip()
+            if not snapshot_date or not page_path:
+                continue
+            impressions = Decimal(row.get("impressions", 0))
+            clicks = Decimal(row.get("clicks", 0))
+            upsert_pages.append(
+                {
+                    "snapshot_date": snapshot_date.isoformat(),
+                    "page_path": page_path,
+                    "country_scope": scope_label,
+                    "device_scope": "all",
+                    "clicks": clicks,
+                    "impressions": impressions,
+                    "ctr": self._safe_rate(clicks, impressions),
+                    "average_position": Decimal(row.get("position", 0)),
+                }
+            )
+        self.repository.upsert_search_console_page_daily(upsert_pages)
+
+        upsert_page_queries: list[dict[str, Any]] = []
+        for row in page_query_rows:
+            snapshot_date = self._parse_gsc_api_date(str(row.get("date") or ""))
+            page_path = str(row.get("page") or "").strip()
+            query = str(row.get("query") or "").strip()
+            if not snapshot_date or not page_path or not query:
+                continue
+            impressions = Decimal(row.get("impressions", 0))
+            clicks = Decimal(row.get("clicks", 0))
+            upsert_page_queries.append(
+                {
+                    "snapshot_date": snapshot_date.isoformat(),
+                    "page_path": page_path,
+                    "query": query,
+                    "country_scope": scope_label,
+                    "device_scope": "all",
+                    "clicks": clicks,
+                    "impressions": impressions,
+                    "ctr": self._safe_rate(clicks, impressions),
+                    "average_position": Decimal(row.get("position", 0)),
+                }
+            )
+        self.repository.upsert_search_console_page_query_daily(upsert_page_queries)
+
+        if scoped_country is None:
+            upsert_countries: list[dict[str, Any]] = []
+            for row in country_rows:
+                snapshot_date = self._parse_gsc_api_date(str(row.get("date") or ""))
+                country_value = str(row.get("country") or "").strip()
+                if not snapshot_date or not country_value:
+                    continue
+                impressions = Decimal(row.get("impressions", 0))
+                clicks = Decimal(row.get("clicks", 0))
+                upsert_countries.append(
+                    {
+                        "snapshot_date": snapshot_date.isoformat(),
+                        "country": country_value,
+                        "clicks": clicks,
+                        "impressions": impressions,
+                        "ctr": self._safe_rate(clicks, impressions),
+                        "average_position": Decimal(row.get("position", 0)),
+                    }
+                )
+            self.repository.upsert_search_console_country_daily(upsert_countries)
+
+        upsert_devices: list[dict[str, Any]] = []
+        for row in device_rows:
+            snapshot_date = self._parse_gsc_api_date(str(row.get("date") or ""))
+            device_value = str(row.get("device") or "").strip()
+            if not snapshot_date or not device_value:
+                continue
+            impressions = Decimal(row.get("impressions", 0))
+            clicks = Decimal(row.get("clicks", 0))
+            upsert_devices.append(
+                {
+                    "snapshot_date": snapshot_date.isoformat(),
+                    "device": device_value,
+                    "clicks": clicks,
+                    "impressions": impressions,
+                    "ctr": self._safe_rate(clicks, impressions),
+                    "average_position": Decimal(row.get("position", 0)),
+                }
+            )
+        self.repository.upsert_search_console_device_daily(upsert_devices)
 
     def _fetch_daily_totals(self, days_back: int = 800) -> list[dict[str, object]]:
         rows = self.ga_client.run_report(
@@ -333,14 +607,11 @@ class MarketingWebAnalyticsService:
         qualified_component = min(qualified_session_rate / Decimal("0.70"), Decimal("1"))
         retained_traffic_component = Decimal("1") - min(bounce_rate / Decimal("0.80"), Decimal("1"))
         return (
-            (
-                (conversion_component * Decimal("45"))
-                + (qualified_component * Decimal("25"))
-                + (retained_traffic_component * Decimal("15"))
-                + (traffic_component * Decimal("15"))
-            )
-            * sample_confidence
-        )
+            (conversion_component * Decimal("45"))
+            + (qualified_component * Decimal("25"))
+            + (retained_traffic_component * Decimal("15"))
+            + (traffic_component * Decimal("15"))
+        ) * sample_confidence
 
     @staticmethod
     def _quality_label(
@@ -989,11 +1260,8 @@ class MarketingWebAnalyticsService:
             )
         return summaries
 
-    def _load_daily_trend(self, run_sync: bool) -> list[MarketingTimeSeriesPoint]:
+    def _load_daily_trend(self) -> list[MarketingTimeSeriesPoint]:
         rows = self.repository.list_latest_daily_snapshots(limit=900)
-        if run_sync and (not rows or str(rows[0].get("snapshot_date")) < date.today().isoformat()):
-            self.run_sync()
-            rows = self.repository.list_latest_daily_snapshots(limit=900)
         points = [
             MarketingTimeSeriesPoint(
                 snapshot_date=datetime.strptime(str(row.get("snapshot_date")), "%Y-%m-%d").date(),
@@ -1296,9 +1564,7 @@ class MarketingWebAnalyticsService:
             if str(row.get("search_term") or "").strip()
         ]
 
-    def get_overview(
-        self, *, run_sync: bool = True, country: str | None = None
-    ) -> MarketingOverview:
+    def get_overview(self, *, country: str | None = None) -> MarketingOverview:
         self._assert_configuration()
         scoped_country = self._normalize_country_scope(country)
 
@@ -1340,7 +1606,7 @@ class MarketingWebAnalyticsService:
             )
             events = self._fetch_top_events(limit=10, days_back=30, country=scoped_country)
         else:
-            trend = self._load_daily_trend(run_sync=run_sync)
+            trend = self._load_daily_trend()
             latest_date = trend[-1].snapshot_date if trend else date.today()
             period_summaries = self._latest_overview_period_summaries(as_of_date=latest_date)
             current = period_summaries.get("current_30d", self._empty_summary())
@@ -1371,7 +1637,7 @@ class MarketingWebAnalyticsService:
     ) -> MarketingSearchPerformance:
         scoped_country = self._normalize_country_scope(country)
         if days_back == 30 and not scoped_country:
-            _ = self._load_daily_trend(run_sync=False)
+            _ = self._load_daily_trend()
             channels = self._fetch_channel_window_totals(days_back=30, limit=8)
             pages = self._latest_pages(limit=15)
             internal_terms = self._latest_internal_search_terms(limit=20)
@@ -1426,37 +1692,551 @@ class MarketingWebAnalyticsService:
         days_back: int = 30,
         country: str | None = None,
     ) -> MarketingSearchConsoleInsights:
-        scoped_country = self._normalize_country_scope(country)
-        self._assert_configuration()
+        _ = country
+        scoped_country = MARKETING_US_SCOPE
+        scope_label = self._country_scope_label(scoped_country)
         is_gsc_connected = bool((self.settings.google_gsc_site_url or "").strip())
-        organic_landing_pages = self._fetch_top_landing_pages(
+        if not is_gsc_connected:
+            return MarketingSearchConsoleInsights(
+                search_console_connected=False,
+                connection_message=(
+                    "Search Console is not connected yet. Connect it to unlock query impressions, "
+                    "CTR, and rankings."
+                ),
+                data_mode="proxy",
+                as_of_date=None,
+                overview=MarketingSearchConsoleOverview(
+                    total_clicks=Decimal("0"),
+                    total_impressions=Decimal("0"),
+                    average_ctr=Decimal("0"),
+                    average_position=Decimal("0"),
+                    freshness_days=None,
+                ),
+                top_queries=[],
+                top_pages=[],
+                country_breakdown=[],
+                device_breakdown=[],
+                opportunities=[],
+                challenges=[],
+                market_benchmarks=[],
+                query_intent_buckets=[],
+                position_band_summary=[],
+                issues=[
+                    MarketingSearchConsoleIssue(
+                        issue_key="search_console_not_connected",
+                        label="Search Console not connected",
+                        status="critical",
+                        detail="Configure GOOGLE_GSC_SITE_URL and service-account permissions.",
+                    )
+                ],
+                organic_landing_pages=[],
+                internal_site_search_terms=[],
+            )
+
+        self._assert_search_console_configuration()
+        today = date.today()
+        try:
+            latest_snapshot_date = self.repository.latest_search_console_snapshot_date(
+                country_scope=scope_label
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+            return MarketingSearchConsoleInsights(
+                search_console_connected=True,
+                connection_message=(
+                    "Search Console is connected, but canonical Search Console tables are "
+                    "not present yet."
+                ),
+                data_mode="proxy",
+                as_of_date=None,
+                overview=MarketingSearchConsoleOverview(
+                    total_clicks=Decimal("0"),
+                    total_impressions=Decimal("0"),
+                    average_ctr=Decimal("0"),
+                    average_position=Decimal("0"),
+                    freshness_days=None,
+                ),
+                top_queries=[],
+                top_pages=[],
+                country_breakdown=[],
+                device_breakdown=[],
+                opportunities=[],
+                challenges=[],
+                market_benchmarks=[],
+                query_intent_buckets=[],
+                position_band_summary=[],
+                issues=[
+                    MarketingSearchConsoleIssue(
+                        issue_key="search_console_tables_missing",
+                        label="Search Console migrations not applied",
+                        status="critical",
+                        detail=(
+                            "Run migration 0087_create_search_console_analytics_tables.sql "
+                            "to enable Search Console snapshot reads."
+                        ),
+                    )
+                ],
+                organic_landing_pages=[],
+                internal_site_search_terms=[],
+            )
+
+        rollup = self.repository.get_search_console_us_workspace_rollup(days_back=days_back)
+        rollup_as_of = rollup.get("as_of_date")
+        as_of_date = date.fromisoformat(str(rollup_as_of)) if rollup_as_of else latest_snapshot_date
+        freshness_days_raw = rollup.get("freshness_days")
+        freshness_days = (
+            int(freshness_days_raw)
+            if freshness_days_raw is not None
+            else ((today - as_of_date).days if as_of_date else None)
+        )
+
+        def _decimal(value: Any) -> Decimal:
+            if value is None or value == "":
+                return Decimal("0")
+            return Decimal(str(value))
+
+        def _classify_opportunity_type(row: dict[str, Any]) -> str:
+            opportunity_id = str(row.get("opportunity_id") or "").strip()
+            average_position = _decimal(row.get("average_position"))
+            if opportunity_id.startswith("low-ctr-query-"):
+                return "low_ctr"
+            if opportunity_id.startswith("near-breakout-query-"):
+                return "near_breakout"
+            if average_position > Decimal("12"):
+                return "destination_gap"
+            return "page_refresh"
+
+        def _classify_challenge_type(row: dict[str, Any]) -> str:
+            challenge_id = str(row.get("challenge_id") or "").strip()
+            average_position = _decimal(row.get("average_position"))
+            ctr = _decimal(row.get("ctr"))
+            if challenge_id.startswith("page-query-ctr-gap-"):
+                return "page_ctr_gap"
+            if average_position > Decimal("15"):
+                return "ranking_drop"
+            if ctr < Decimal("0.01"):
+                return "coverage_gap"
+            return "intent_mismatch"
+
+        overview_payload = (
+            rollup.get("overview") if isinstance(rollup.get("overview"), dict) else {}
+        )
+        top_queries_payload = (
+            rollup.get("top_queries") if isinstance(rollup.get("top_queries"), list) else []
+        )
+        top_pages_payload = (
+            rollup.get("top_pages") if isinstance(rollup.get("top_pages"), list) else []
+        )
+        country_breakdown_payload = (
+            rollup.get("country_breakdown")
+            if isinstance(rollup.get("country_breakdown"), list)
+            else []
+        )
+        device_breakdown_payload = (
+            rollup.get("device_breakdown")
+            if isinstance(rollup.get("device_breakdown"), list)
+            else []
+        )
+        opportunities_payload = (
+            rollup.get("opportunities") if isinstance(rollup.get("opportunities"), list) else []
+        )
+        challenges_payload = (
+            rollup.get("challenges") if isinstance(rollup.get("challenges"), list) else []
+        )
+        benchmarks_payload = (
+            rollup.get("market_benchmarks")
+            if isinstance(rollup.get("market_benchmarks"), list)
+            else []
+        )
+        intent_buckets_payload = (
+            rollup.get("query_intent_buckets")
+            if isinstance(rollup.get("query_intent_buckets"), list)
+            else []
+        )
+        position_bands_payload = (
+            rollup.get("position_band_summary")
+            if isinstance(rollup.get("position_band_summary"), list)
+            else []
+        )
+
+        top_queries = [
+            MarketingSearchQuery(
+                query=str(row.get("query") or "").strip(),
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                ctr=_decimal(row.get("ctr")),
+                average_position=_decimal(row.get("average_position")),
+                is_branded=bool(row.get("is_branded")),
+                intent_bucket=str(row.get("intent_bucket") or "").strip() or None,
+                term_type=str(row.get("term_type") or "").strip() or None,
+                position_band=str(row.get("position_band") or "").strip() or None,
+            )
+            for row in top_queries_payload
+            if isinstance(row, dict) and str(row.get("query") or "").strip()
+        ]
+        top_pages = [
+            MarketingSearchConsolePagePerformance(
+                page_path=str(row.get("page_path") or "").strip(),
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                ctr=_decimal(row.get("ctr")),
+                average_position=_decimal(row.get("average_position")),
+            )
+            for row in top_pages_payload
+            if isinstance(row, dict) and str(row.get("page_path") or "").strip()
+        ]
+        country_breakdown = [
+            MarketingSearchConsoleBreakdownRow(
+                label=str(row.get("label") or "").strip(),
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                ctr=_decimal(row.get("ctr")),
+                average_position=_decimal(row.get("average_position")),
+            )
+            for row in country_breakdown_payload
+            if isinstance(row, dict) and str(row.get("label") or "").strip()
+        ]
+        device_breakdown = [
+            MarketingSearchConsoleBreakdownRow(
+                label=str(row.get("label") or "").strip(),
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                ctr=_decimal(row.get("ctr")),
+                average_position=_decimal(row.get("average_position")),
+            )
+            for row in device_breakdown_payload
+            if isinstance(row, dict) and str(row.get("label") or "").strip()
+        ]
+        opportunities = [
+            MarketingSearchConsoleOpportunity(
+                opportunity_id=str(row.get("opportunity_id") or "").strip(),
+                title=str(row.get("title") or "").strip(),
+                summary=str(row.get("summary") or "").strip(),
+                page_path=str(row.get("page_path") or "").strip() or None,
+                query=str(row.get("query") or "").strip() or None,
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                ctr=_decimal(row.get("ctr")),
+                average_position=_decimal(row.get("average_position")),
+                priority_score=_decimal(row.get("priority_score")),
+                recommended_action=str(row.get("recommended_action") or "").strip(),
+                opportunity_type=(
+                    str(row.get("opportunity_type") or "").strip()
+                    or _classify_opportunity_type(row)
+                ),
+            )
+            for row in opportunities_payload
+            if isinstance(row, dict) and str(row.get("opportunity_id") or "").strip()
+        ]
+        challenges = [
+            MarketingSearchConsoleChallenge(
+                challenge_id=str(row.get("challenge_id") or "").strip(),
+                title=str(row.get("title") or "").strip(),
+                summary=str(row.get("summary") or "").strip(),
+                page_path=str(row.get("page_path") or "").strip() or None,
+                query=str(row.get("query") or "").strip() or None,
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                ctr=_decimal(row.get("ctr")),
+                average_position=_decimal(row.get("average_position")),
+                severity_score=_decimal(row.get("severity_score")),
+                recommended_action=str(row.get("recommended_action") or "").strip(),
+                challenge_type=(
+                    str(row.get("challenge_type") or "").strip() or _classify_challenge_type(row)
+                ),
+            )
+            for row in challenges_payload
+            if isinstance(row, dict) and str(row.get("challenge_id") or "").strip()
+        ]
+        market_benchmarks = [
+            MarketingSearchConsoleMarketBenchmark(
+                market_label=str(row.get("market_label") or "").strip(),
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                ctr=_decimal(row.get("ctr")),
+                average_position=_decimal(row.get("average_position")),
+            )
+            for row in benchmarks_payload
+            if isinstance(row, dict) and str(row.get("market_label") or "").strip()
+        ]
+        query_intent_buckets = [
+            MarketingSearchConsoleIntentBucket(
+                bucket_label=str(row.get("bucket_label") or "").strip(),
+                query_count=int(row.get("query_count") or 0),
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                average_ctr=_decimal(row.get("average_ctr")),
+            )
+            for row in intent_buckets_payload
+            if isinstance(row, dict) and str(row.get("bucket_label") or "").strip()
+        ]
+        position_band_summary = [
+            MarketingSearchConsolePositionBand(
+                band_label=str(row.get("band_label") or "").strip(),
+                query_count=int(row.get("query_count") or 0),
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                average_ctr=_decimal(row.get("average_ctr")),
+            )
+            for row in position_bands_payload
+            if isinstance(row, dict) and str(row.get("band_label") or "").strip()
+        ]
+        query_row_count = int(rollup.get("query_row_count") or 0)
+
+        issues: list[MarketingSearchConsoleIssue] = []
+        if query_row_count <= 0:
+            issues.append(
+                MarketingSearchConsoleIssue(
+                    issue_key="empty_query_dataset",
+                    label="No query data returned",
+                    status="warning",
+                    detail="Search Console returned no query rows for the selected window.",
+                )
+            )
+        if freshness_days is not None and freshness_days > 3:
+            issues.append(
+                MarketingSearchConsoleIssue(
+                    issue_key="stale_search_console_snapshot",
+                    label="Search Console snapshot is stale",
+                    status="warning",
+                    detail=f"Latest stored Search Console snapshot is {freshness_days} days old.",
+                )
+            )
+        if not issues:
+            issues.append(
+                MarketingSearchConsoleIssue(
+                    issue_key="search_console_healthy",
+                    label="Search Console data is healthy",
+                    status="healthy",
+                    detail=(
+                        "Search Console snapshots are current and query/page datasets "
+                        "are populated."
+                    ),
+                )
+            )
+
+        internal_terms = self._fetch_internal_site_search_terms(
             days_back=days_back,
             limit=20,
             country=scoped_country,
         )
-        internal_terms = self._fetch_internal_site_search_terms(
-            days_back=days_back,
-            limit=30,
-            country=scoped_country,
-        )
-        connection_message = (
-            (
-                "Search Console is not connected yet. Connect it to unlock query impressions, "
-                "CTR, and rankings."
+        organic_landing_pages = [
+            MarketingLandingPagePerformance(
+                snapshot_date=as_of_date or today,
+                landing_page=page.page_path,
+                sessions=page.clicks,
+                total_users=page.clicks,
+                engagement_rate=page.ctr,
+                key_events=Decimal("0"),
+                avg_session_duration_seconds=None,
             )
-            if not is_gsc_connected
-            else (
-                "Search Console is connected. Query ingestion is configured for dedicated "
-                "keyword insights."
-            )
-        )
+            for page in top_pages[:20]
+        ]
+
         return MarketingSearchConsoleInsights(
-            search_console_connected=is_gsc_connected,
-            connection_message=connection_message,
-            data_mode="live_gsc" if is_gsc_connected else "proxy",
-            top_queries=[],
+            search_console_connected=True,
+            connection_message=(
+                "Search Console is connected and Supabase snapshots are serving US-first search "
+                "insights with benchmark market comparisons."
+            ),
+            data_mode="snapshot",
+            as_of_date=as_of_date,
+            overview=MarketingSearchConsoleOverview(
+                total_clicks=_decimal(overview_payload.get("total_clicks")),
+                total_impressions=_decimal(overview_payload.get("total_impressions")),
+                average_ctr=_decimal(overview_payload.get("average_ctr")),
+                average_position=_decimal(overview_payload.get("average_position")),
+                clicks_delta_pct=(
+                    _decimal(overview_payload.get("clicks_delta_pct"))
+                    if overview_payload.get("clicks_delta_pct") is not None
+                    else None
+                ),
+                impressions_delta_pct=(
+                    _decimal(overview_payload.get("impressions_delta_pct"))
+                    if overview_payload.get("impressions_delta_pct") is not None
+                    else None
+                ),
+                ctr_delta_pct=(
+                    _decimal(overview_payload.get("ctr_delta_pct"))
+                    if overview_payload.get("ctr_delta_pct") is not None
+                    else None
+                ),
+                position_delta=(
+                    _decimal(overview_payload.get("position_delta"))
+                    if overview_payload.get("position_delta") is not None
+                    else None
+                ),
+                freshness_days=freshness_days,
+            ),
+            top_queries=top_queries,
+            top_pages=top_pages,
+            country_breakdown=country_breakdown,
+            device_breakdown=device_breakdown,
+            opportunities=opportunities,
+            challenges=challenges,
+            market_benchmarks=market_benchmarks,
+            query_intent_buckets=query_intent_buckets,
+            position_band_summary=position_band_summary,
+            issues=issues,
             organic_landing_pages=organic_landing_pages,
             internal_site_search_terms=internal_terms,
+        )
+
+    def get_search_console_page_profile(
+        self,
+        *,
+        page_path: str,
+        days_back: int = 30,
+    ) -> MarketingSearchConsolePageProfile:
+        normalized_page_path = (page_path or "").strip()
+        if not normalized_page_path:
+            raise BadRequestError("page_path is required")
+        is_absolute_url = normalized_page_path.startswith(
+            ("http://", "https://")
+        )
+        if not normalized_page_path.startswith("/") and not is_absolute_url:
+            normalized_page_path = f"/{normalized_page_path}"
+
+        def _decimal(value: Any) -> Decimal:
+            if value is None or value == "":
+                return Decimal("0")
+            return Decimal(str(value))
+
+        rollup = self.repository.get_search_console_page_profile_rollup(
+            days_back=days_back,
+            page_path=normalized_page_path,
+        )
+        if normalized_page_path.startswith(("http://", "https://")):
+            trend_rows = (
+                rollup.get("daily_trend")
+                if isinstance(rollup.get("daily_trend"), list)
+                else []
+            )
+            query_rows = (
+                rollup.get("top_queries")
+                if isinstance(rollup.get("top_queries"), list)
+                else []
+            )
+            if not trend_rows and not query_rows:
+                alternate_page_path = (
+                    normalized_page_path[:-1]
+                    if normalized_page_path.endswith("/")
+                    else f"{normalized_page_path}/"
+                )
+                rollup = self.repository.get_search_console_page_profile_rollup(
+                    days_back=days_back,
+                    page_path=alternate_page_path,
+                )
+                normalized_page_path = alternate_page_path
+        overview_payload = (
+            rollup.get("overview") if isinstance(rollup.get("overview"), dict) else {}
+        )
+        top_queries_payload = (
+            rollup.get("top_queries") if isinstance(rollup.get("top_queries"), list) else []
+        )
+        trend_payload = (
+            rollup.get("daily_trend") if isinstance(rollup.get("daily_trend"), list) else []
+        )
+        benchmarks_payload = (
+            rollup.get("market_benchmarks")
+            if isinstance(rollup.get("market_benchmarks"), list)
+            else []
+        )
+        as_of_raw = rollup.get("as_of_date")
+        as_of_date = date.fromisoformat(str(as_of_raw)) if as_of_raw else None
+
+        top_queries = [
+            MarketingSearchQuery(
+                query=str(row.get("query") or "").strip(),
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                ctr=_decimal(row.get("ctr")),
+                average_position=_decimal(row.get("average_position")),
+                is_branded=bool(row.get("is_branded")),
+            )
+            for row in top_queries_payload
+            if isinstance(row, dict) and str(row.get("query") or "").strip()
+        ]
+        daily_trend = [
+            MarketingSearchConsolePageTrendPoint(
+                snapshot_date=date.fromisoformat(str(row.get("snapshot_date"))),
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                ctr=_decimal(row.get("ctr")),
+                average_position=_decimal(row.get("average_position")),
+            )
+            for row in trend_payload
+            if isinstance(row, dict) and row.get("snapshot_date")
+        ]
+        market_benchmarks = [
+            MarketingSearchConsoleMarketBenchmark(
+                market_label=str(row.get("market_label") or "").strip(),
+                clicks=_decimal(row.get("clicks")),
+                impressions=_decimal(row.get("impressions")),
+                ctr=_decimal(row.get("ctr")),
+                average_position=_decimal(row.get("average_position")),
+            )
+            for row in benchmarks_payload
+            if isinstance(row, dict) and str(row.get("market_label") or "").strip()
+        ]
+
+        issues: list[MarketingSearchConsoleIssue] = []
+        if not daily_trend:
+            issues.append(
+                MarketingSearchConsoleIssue(
+                    issue_key="empty_page_profile",
+                    label="No page-level trend data",
+                    status="warning",
+                    detail="No Search Console page data is available for this URL and time window.",
+                )
+            )
+        if not top_queries:
+            issues.append(
+                MarketingSearchConsoleIssue(
+                    issue_key="empty_page_profile_queries",
+                    label="No query matches for page",
+                    status="warning",
+                    detail=(
+                        "No associated search queries were found for this URL in the selected "
+                        "window."
+                    ),
+                )
+            )
+        if not issues:
+            issues.append(
+                MarketingSearchConsoleIssue(
+                    issue_key="page_profile_healthy",
+                    label="Page profile data is healthy",
+                    status="healthy",
+                    detail="Page trend and query coverage are available for this URL.",
+                )
+            )
+
+        recommended_actions = [
+            (
+                "Tighten title and meta description to improve click-through on "
+                "high-impression queries."
+            ),
+            "Align page headings with strongest query intent themes from this profile.",
+            "Add internal links from related destination pages to strengthen topical authority.",
+        ]
+
+        return MarketingSearchConsolePageProfile(
+            page_path=normalized_page_path,
+            as_of_date=as_of_date,
+            overview=MarketingSearchConsoleOverview(
+                total_clicks=_decimal(overview_payload.get("total_clicks")),
+                total_impressions=_decimal(overview_payload.get("total_impressions")),
+                average_ctr=_decimal(overview_payload.get("average_ctr")),
+                average_position=_decimal(overview_payload.get("average_position")),
+                freshness_days=(date.today() - as_of_date).days if as_of_date else None,
+            ),
+            daily_trend=daily_trend,
+            top_queries=top_queries,
+            market_benchmarks=market_benchmarks,
+            issues=issues,
+            recommended_actions=recommended_actions,
         )
 
     def get_page_activity(
@@ -1469,7 +2249,7 @@ class MarketingWebAnalyticsService:
     ) -> MarketingPageActivity:
         scoped_country = self._normalize_country_scope(country)
         if days_back == 30 and not scoped_country:
-            _ = self._load_daily_trend(run_sync=True)
+            _ = self._load_daily_trend()
             snapshot_date, all_pages = self._latest_page_activity_rows(
                 limit=limit,
                 page_path_contains=page_path_contains,
@@ -1522,7 +2302,7 @@ class MarketingWebAnalyticsService:
     ) -> MarketingGeoBreakdown:
         scoped_country = self._normalize_country_scope(country)
         if days_back == 30 and not scoped_country:
-            _ = self._load_daily_trend(run_sync=True)
+            _ = self._load_daily_trend()
             snapshot_date, rows = self._latest_geo_rows(limit=300)
             top_countries = self._fetch_country_window_totals(days_back=30, limit=12)
             demographics = self._latest_demographics(limit=50)
@@ -1555,7 +2335,7 @@ class MarketingWebAnalyticsService:
             self._assert_configuration()
             events = self._fetch_top_events(limit=50, days_back=30, country=scoped_country)
         else:
-            _ = self._load_daily_trend(run_sync=True)
+            _ = self._load_daily_trend()
             events = self._latest_events(limit=50)
         snapshot_date = events[0].snapshot_date if events else None
         catalog_items: list[MarketingEventCatalogItem] = []
@@ -1584,7 +2364,7 @@ class MarketingWebAnalyticsService:
 
     def get_ai_insights(self, *, country: str | None = None) -> list[MarketingAiInsight]:
         scoped_country = self._normalize_country_scope(country)
-        overview = self.get_overview(run_sync=False, country=scoped_country)
+        overview = self.get_overview(country=scoped_country)
         page_activity = self.get_page_activity(days_back=30, country=scoped_country)
         geo = self.get_geo_breakdown(days_back=30, country=scoped_country)
         search = self.get_search_performance(days_back=30, country=scoped_country)

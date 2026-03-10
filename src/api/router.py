@@ -5,6 +5,8 @@ from fastapi import APIRouter
 from src.api.ap import router as ap_router
 from src.api.booking_forecasts import router as booking_forecasts_router
 from src.api.ai_insights import router as ai_insights_router
+from src.api.data_job_runs import router as data_job_runs_router
+from src.api.data_jobs import router as data_jobs_router
 from src.api.cash_flow import router as cash_flow_router
 from src.api.deposits import router as deposits_router
 from src.api.debt_service import router as debt_service_router
@@ -25,6 +27,8 @@ from src.api.travel_trade_search import router as travel_trade_search_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
+api_router.include_router(data_jobs_router)
+api_router.include_router(data_job_runs_router)
 api_router.include_router(ap_router)
 api_router.include_router(cash_flow_router)
 api_router.include_router(deposits_router)

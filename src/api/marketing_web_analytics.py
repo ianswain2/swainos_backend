@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.concurrency import run_in_threadpool
 
 from src.api.dependencies import get_marketing_web_analytics_service
-from src.core.config import get_settings
-from src.core.errors import BadRequestError
 from src.schemas.marketing_web_analytics import (
     MarketingAiInsight,
     MarketingEventCatalog,
@@ -16,8 +14,8 @@ from src.schemas.marketing_web_analytics import (
     MarketingOverview,
     MarketingPageActivity,
     MarketingSearchConsoleInsights,
+    MarketingSearchConsolePageProfile,
     MarketingSearchPerformance,
-    MarketingWebAnalyticsSyncResult,
 )
 from src.services.marketing_web_analytics_service import MarketingWebAnalyticsService
 from src.shared.response import Meta, ResponseEnvelope
@@ -26,7 +24,6 @@ router = APIRouter(prefix="/marketing/web-analytics", tags=["marketing-web-analy
 
 MARKETING_CALCULATION_VERSION = "v1"
 MARKETING_SERVICE_DEP = Depends(get_marketing_web_analytics_service)
-MARKETING_RUN_TOKEN_HEADER = Header(default=None)
 
 
 def _normalize_country_scope(country: str | None) -> str | None:
@@ -102,24 +99,57 @@ async def marketing_search_performance(
 @router.get("/search-console")
 async def marketing_search_console_insights(
     days_back: int = Query(default=30, ge=7, le=365, alias="days_back"),
-    country: str | None = Query(default=None),
     service: MarketingWebAnalyticsService = MARKETING_SERVICE_DEP,
 ) -> ResponseEnvelope[MarketingSearchConsoleInsights]:
-    normalized_country = _normalize_country_scope(country)
+    normalized_country = "United States"
     data = await run_in_threadpool(
         service.get_search_console_insights,
         days_back=days_back,
-        country=normalized_country,
     )
-    status = "live" if data.search_console_connected else "partial"
+    if not data.search_console_connected:
+        status = "partial"
+    elif any(issue.status == "critical" for issue in data.issues):
+        status = "degraded"
+    elif any(issue.status == "warning" for issue in data.issues):
+        status = "partial"
+    else:
+        status = "live"
     return ResponseEnvelope(
         data=data,
         pagination=None,
         meta=_build_meta(
-            "gsc + ga4",
+            "gsc + supabase",
             data_status=status,
             time_window=f"{days_back}d",
             country=normalized_country,
+        ),
+    )
+
+
+@router.get("/search-console/page-profile")
+async def marketing_search_console_page_profile(
+    page_path: str = Query(..., min_length=1),
+    days_back: int = Query(default=30, ge=7, le=365, alias="days_back"),
+    service: MarketingWebAnalyticsService = MARKETING_SERVICE_DEP,
+) -> ResponseEnvelope[MarketingSearchConsolePageProfile]:
+    data = await run_in_threadpool(
+        service.get_search_console_page_profile,
+        page_path=page_path,
+        days_back=days_back,
+    )
+    status = "live"
+    if any(issue.status == "critical" for issue in data.issues):
+        status = "degraded"
+    elif any(issue.status == "warning" for issue in data.issues):
+        status = "partial"
+    return ResponseEnvelope(
+        data=data,
+        pagination=None,
+        meta=_build_meta(
+            "gsc + supabase",
+            data_status=status,
+            time_window=f"{days_back}d",
+            country="United States",
         ),
     )
 
@@ -203,17 +233,3 @@ async def marketing_health(
     return ResponseEnvelope(data=data, pagination=None, meta=_build_meta("ga4", data_status=status))
 
 
-@router.post("/sync/run")
-async def marketing_sync_run(
-    service: MarketingWebAnalyticsService = MARKETING_SERVICE_DEP,
-    x_marketing_run_token: str | None = MARKETING_RUN_TOKEN_HEADER,
-) -> ResponseEnvelope[MarketingWebAnalyticsSyncResult]:
-    configured_token = (get_settings().marketing_manual_run_token or "").strip()
-    if configured_token and x_marketing_run_token != configured_token:
-        raise BadRequestError("Invalid marketing run token")
-    result = await run_in_threadpool(service.run_sync)
-    return ResponseEnvelope(
-        data=result,
-        pagination=None,
-        meta=_build_meta("ga4_sync", data_status=result.status),
-    )

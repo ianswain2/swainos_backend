@@ -17,7 +17,12 @@ from src.schemas.marketing_web_analytics import (
     MarketingHealthStatus,
     MarketingOverview,
     MarketingPageActivity,
+    MarketingSearchConsoleBreakdownRow,
     MarketingSearchConsoleInsights,
+    MarketingSearchConsoleIssue,
+    MarketingSearchConsoleOverview,
+    MarketingSearchConsolePagePerformance,
+    MarketingSearchConsolePageProfile,
     MarketingSearchPerformance,
 )
 
@@ -63,9 +68,73 @@ class FakeMarketingWebAnalyticsService:
             search_console_connected=False,
             connection_message="Search Console is not connected yet.",
             data_mode="proxy",
+            as_of_date=None,
+            overview=MarketingSearchConsoleOverview(
+                total_clicks=Decimal("0"),
+                total_impressions=Decimal("0"),
+                average_ctr=Decimal("0"),
+                average_position=Decimal("0"),
+                freshness_days=None,
+            ),
             top_queries=[],
+            top_pages=[
+                MarketingSearchConsolePagePerformance(
+                    page_path="/destinations/botswana",
+                    clicks=Decimal("10"),
+                    impressions=Decimal("50"),
+                    ctr=Decimal("0.2"),
+                    average_position=Decimal("5"),
+                )
+            ],
+            country_breakdown=[
+                MarketingSearchConsoleBreakdownRow(
+                    label="United States",
+                    clicks=Decimal("10"),
+                    impressions=Decimal("50"),
+                    ctr=Decimal("0.2"),
+                    average_position=Decimal("5"),
+                )
+            ],
+            device_breakdown=[],
+            opportunities=[],
+            challenges=[],
+            market_benchmarks=[],
+            query_intent_buckets=[],
+            position_band_summary=[],
+            issues=[
+                MarketingSearchConsoleIssue(
+                    issue_key="search_console_not_connected",
+                    label="Search Console not connected",
+                    status="critical",
+                    detail="Connect Search Console.",
+                )
+            ],
             organic_landing_pages=[],
             internal_site_search_terms=[],
+        )
+
+    def get_search_console_page_profile(
+        self,
+        *,
+        page_path: str,
+        days_back: int = 30,
+    ) -> MarketingSearchConsolePageProfile:
+        _ = page_path, days_back
+        return MarketingSearchConsolePageProfile(
+            page_path="/destinations/botswana",
+            as_of_date=date.today(),
+            overview=MarketingSearchConsoleOverview(
+                total_clicks=Decimal("10"),
+                total_impressions=Decimal("100"),
+                average_ctr=Decimal("0.1"),
+                average_position=Decimal("4"),
+                freshness_days=1,
+            ),
+            daily_trend=[],
+            top_queries=[],
+            market_benchmarks=[],
+            issues=[],
+            recommended_actions=["Improve title tag"],
         )
 
     def get_ai_insights(self, *, country: str | None = None) -> list[MarketingAiInsight]:
@@ -196,5 +265,16 @@ def test_marketing_search_console_endpoint_returns_partial_when_disconnected(
     response = client.get("/api/v1/marketing/web-analytics/search-console?days_back=30")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["meta"]["source"] == "gsc + ga4"
+    assert payload["meta"]["source"] == "gsc + supabase"
     assert payload["meta"]["dataStatus"] == "partial"
+
+
+def test_marketing_search_console_page_profile_endpoint_returns_profile(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/api/v1/marketing/web-analytics/search-console/page-profile?page_path=/destinations/botswana"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["pagePath"] == "/destinations/botswana"

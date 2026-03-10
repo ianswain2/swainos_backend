@@ -120,7 +120,7 @@ def test_overview_uses_snapshot_period_users_not_summed_daily_users() -> None:
         ]
     )
 
-    overview = service.get_overview(run_sync=False)
+    overview = service.get_overview()
     users_kpi = next(kpi for kpi in overview.kpis if kpi.metric_key == "totalUsers")
     assert users_kpi.current_value == Decimal("150")
 
@@ -285,3 +285,209 @@ def test_search_performance_includes_referral_and_source_value_mix() -> None:
     assert result.source_mix[0].quality_label in {"qualified", "mixed", "poor"}
     assert result.referral_sources[0].source == "tripadvisor.com"
     assert result.top_valuable_sources[0].value_score >= result.top_valuable_sources[1].value_score
+
+
+def test_search_console_snapshot_builds_overview_and_rankings() -> None:
+    class SearchConsoleSnapshotService(MarketingWebAnalyticsService):
+        def _assert_search_console_configuration(self) -> None:
+            return None
+
+        def _sync_search_console_snapshots(
+            self,
+            *,
+            days_back: int,
+            country: str | None = None,
+        ) -> None:
+            _ = days_back, country
+            return None
+
+    repository = FakeMarketingRepository()
+    service = SearchConsoleSnapshotService(repository=repository, ga_client=FakeMarketingGaClient())
+    service.settings.google_gsc_site_url = "https://www.swaindestinations.com/"
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    two_days_ago = today - timedelta(days=2)
+
+    repository.upsert_search_console_daily(
+        [
+            {
+                "snapshot_date": today.isoformat(),
+                "country_scope": "United States",
+                "device_scope": "all",
+                "clicks": Decimal("100"),
+                "impressions": Decimal("2500"),
+                "ctr": Decimal("0.04"),
+                "average_position": Decimal("8"),
+            },
+            {
+                "snapshot_date": yesterday.isoformat(),
+                "country_scope": "United States",
+                "device_scope": "all",
+                "clicks": Decimal("90"),
+                "impressions": Decimal("2400"),
+                "ctr": Decimal("0.0375"),
+                "average_position": Decimal("9"),
+            },
+            {
+                "snapshot_date": two_days_ago.isoformat(),
+                "country_scope": "United States",
+                "device_scope": "all",
+                "clicks": Decimal("80"),
+                "impressions": Decimal("2300"),
+                "ctr": Decimal("0.0348"),
+                "average_position": Decimal("10"),
+            },
+        ]
+    )
+    repository.upsert_search_console_query_daily(
+        [
+            {
+                "snapshot_date": today.isoformat(),
+                "query": "botswana safari",
+                "country_scope": "United States",
+                "device_scope": "all",
+                "clicks": Decimal("30"),
+                "impressions": Decimal("1200"),
+                "ctr": Decimal("0.025"),
+                "average_position": Decimal("7"),
+                "is_branded": False,
+            },
+            {
+                "snapshot_date": today.isoformat(),
+                "query": "swain destinations",
+                "country_scope": "United States",
+                "device_scope": "all",
+                "clicks": Decimal("45"),
+                "impressions": Decimal("700"),
+                "ctr": Decimal("0.064"),
+                "average_position": Decimal("1.2"),
+                "is_branded": True,
+            },
+        ]
+    )
+    repository.upsert_search_console_page_daily(
+        [
+            {
+                "snapshot_date": today.isoformat(),
+                "page_path": "/destinations/botswana",
+                "country_scope": "United States",
+                "device_scope": "all",
+                "clicks": Decimal("35"),
+                "impressions": Decimal("1300"),
+                "ctr": Decimal("0.0269"),
+                "average_position": Decimal("6.8"),
+            }
+        ]
+    )
+    repository.upsert_search_console_page_query_daily(
+        [
+            {
+                "snapshot_date": today.isoformat(),
+                "page_path": "/destinations/botswana",
+                "query": "botswana safari",
+                "country_scope": "United States",
+                "device_scope": "all",
+                "clicks": Decimal("30"),
+                "impressions": Decimal("1200"),
+                "ctr": Decimal("0.025"),
+                "average_position": Decimal("7"),
+            }
+        ]
+    )
+    repository.upsert_search_console_country_daily(
+        [
+            {
+                "snapshot_date": today.isoformat(),
+                "country": "United States",
+                "clicks": Decimal("70"),
+                "impressions": Decimal("1800"),
+                "ctr": Decimal("0.0389"),
+                "average_position": Decimal("7.1"),
+            }
+        ]
+    )
+    repository.upsert_search_console_device_daily(
+        [
+            {
+                "snapshot_date": today.isoformat(),
+                "device": "mobile",
+                "clicks": Decimal("60"),
+                "impressions": Decimal("1500"),
+                "ctr": Decimal("0.04"),
+                "average_position": Decimal("8.3"),
+            }
+        ]
+    )
+
+    result = service.get_search_console_insights(days_back=3, country=None)
+    assert result.search_console_connected is True
+    assert result.data_mode in {"snapshot", "live_gsc"}
+    assert result.overview.total_clicks > 0
+    assert result.top_queries[0].query in {"botswana safari", "swain destinations"}
+    assert result.top_pages[0].page_path == "/destinations/botswana"
+    assert len(result.market_benchmarks) >= 1
+    assert len(result.query_intent_buckets) >= 1
+    assert result.issues[0].status in {"healthy", "warning", "critical"}
+
+
+def test_search_console_page_profile_returns_page_specific_payload() -> None:
+    class SearchConsolePageProfileService(MarketingWebAnalyticsService):
+        def _assert_search_console_configuration(self) -> None:
+            return None
+
+    repository = FakeMarketingRepository()
+    service = SearchConsolePageProfileService(
+        repository=repository,
+        ga_client=FakeMarketingGaClient(),
+    )
+    service.settings.google_gsc_site_url = "https://www.swaindestinations.com/"
+    today = date.today().isoformat()
+    page_path = "/destinations/botswana"
+
+    repository.upsert_search_console_daily(
+        [
+            {
+                "snapshot_date": today,
+                "country_scope": "United States",
+                "device_scope": "all",
+                "clicks": Decimal("80"),
+                "impressions": Decimal("1600"),
+                "ctr": Decimal("0.05"),
+                "average_position": Decimal("6"),
+            }
+        ]
+    )
+    repository.upsert_search_console_page_daily(
+        [
+            {
+                "snapshot_date": today,
+                "page_path": page_path,
+                "country_scope": "United States",
+                "device_scope": "all",
+                "clicks": Decimal("40"),
+                "impressions": Decimal("700"),
+                "ctr": Decimal("0.057"),
+                "average_position": Decimal("5.1"),
+            }
+        ]
+    )
+    repository.upsert_search_console_page_query_daily(
+        [
+            {
+                "snapshot_date": today,
+                "page_path": page_path,
+                "query": "botswana safari packages",
+                "country_scope": "United States",
+                "device_scope": "all",
+                "clicks": Decimal("24"),
+                "impressions": Decimal("420"),
+                "ctr": Decimal("0.057"),
+                "average_position": Decimal("5.3"),
+            }
+        ]
+    )
+
+    result = service.get_search_console_page_profile(page_path=page_path, days_back=30)
+    assert result.page_path == page_path
+    assert result.overview.total_clicks > 0
+    assert len(result.top_queries) == 1

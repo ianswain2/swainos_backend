@@ -148,6 +148,103 @@ class MarketingSearchQuery(BaseSchema):
     impressions: Decimal
     ctr: Decimal
     average_position: Decimal
+    is_branded: bool = False
+    intent_bucket: str | None = None
+    term_type: str | None = None
+    position_band: str | None = None
+
+
+class MarketingSearchConsolePagePerformance(BaseSchema):
+    page_path: str
+    clicks: Decimal
+    impressions: Decimal
+    ctr: Decimal
+    average_position: Decimal
+
+
+class MarketingSearchConsoleBreakdownRow(BaseSchema):
+    label: str
+    clicks: Decimal
+    impressions: Decimal
+    ctr: Decimal
+    average_position: Decimal
+
+
+class MarketingSearchConsoleOverview(BaseSchema):
+    total_clicks: Decimal
+    total_impressions: Decimal
+    average_ctr: Decimal
+    average_position: Decimal
+    clicks_delta_pct: Decimal | None = None
+    impressions_delta_pct: Decimal | None = None
+    ctr_delta_pct: Decimal | None = None
+    position_delta: Decimal | None = None
+    freshness_days: int | None = None
+
+
+class MarketingSearchConsoleMarketBenchmark(BaseSchema):
+    market_label: str
+    clicks: Decimal
+    impressions: Decimal
+    ctr: Decimal
+    average_position: Decimal
+
+
+class MarketingSearchConsoleIntentBucket(BaseSchema):
+    bucket_label: str
+    query_count: int
+    clicks: Decimal
+    impressions: Decimal
+    average_ctr: Decimal
+
+
+class MarketingSearchConsolePositionBand(BaseSchema):
+    band_label: str
+    query_count: int
+    clicks: Decimal
+    impressions: Decimal
+    average_ctr: Decimal
+
+
+class MarketingSearchConsoleOpportunity(BaseSchema):
+    opportunity_id: str
+    title: str
+    summary: str
+    page_path: str | None = None
+    query: str | None = None
+    clicks: Decimal
+    impressions: Decimal
+    ctr: Decimal
+    average_position: Decimal
+    priority_score: Decimal
+    recommended_action: str
+    opportunity_type: (
+        Literal["low_ctr", "near_breakout", "page_refresh", "destination_gap"] | None
+    ) = None
+
+
+class MarketingSearchConsoleChallenge(BaseSchema):
+    challenge_id: str
+    title: str
+    summary: str
+    page_path: str | None = None
+    query: str | None = None
+    clicks: Decimal
+    impressions: Decimal
+    ctr: Decimal
+    average_position: Decimal
+    severity_score: Decimal
+    recommended_action: str
+    challenge_type: (
+        Literal["page_ctr_gap", "ranking_drop", "coverage_gap", "intent_mismatch"] | None
+    ) = None
+
+
+class MarketingSearchConsoleIssue(BaseSchema):
+    issue_key: str
+    label: str
+    status: Literal["healthy", "warning", "critical"]
+    detail: str
 
 
 class MarketingSearchPerformance(BaseSchema):
@@ -179,10 +276,40 @@ class MarketingSourcePerformance(BaseSchema):
 class MarketingSearchConsoleInsights(BaseSchema):
     search_console_connected: bool
     connection_message: str
-    data_mode: Literal["proxy", "live_gsc"]
+    data_mode: Literal["proxy", "live_gsc", "snapshot"]
+    as_of_date: date | None = None
+    overview: MarketingSearchConsoleOverview
     top_queries: list[MarketingSearchQuery]
+    top_pages: list[MarketingSearchConsolePagePerformance]
+    country_breakdown: list[MarketingSearchConsoleBreakdownRow]
+    device_breakdown: list[MarketingSearchConsoleBreakdownRow]
+    opportunities: list[MarketingSearchConsoleOpportunity]
+    challenges: list[MarketingSearchConsoleChallenge]
+    market_benchmarks: list[MarketingSearchConsoleMarketBenchmark] = []
+    query_intent_buckets: list[MarketingSearchConsoleIntentBucket] = []
+    position_band_summary: list[MarketingSearchConsolePositionBand] = []
+    issues: list[MarketingSearchConsoleIssue]
     organic_landing_pages: list[MarketingLandingPagePerformance]
     internal_site_search_terms: list[MarketingInternalSiteSearchTerm]
+
+
+class MarketingSearchConsolePageTrendPoint(BaseSchema):
+    snapshot_date: date
+    clicks: Decimal
+    impressions: Decimal
+    ctr: Decimal
+    average_position: Decimal
+
+
+class MarketingSearchConsolePageProfile(BaseSchema):
+    page_path: str
+    as_of_date: date | None = None
+    overview: MarketingSearchConsoleOverview
+    daily_trend: list[MarketingSearchConsolePageTrendPoint]
+    top_queries: list[MarketingSearchQuery]
+    market_benchmarks: list[MarketingSearchConsoleMarketBenchmark] = []
+    issues: list[MarketingSearchConsoleIssue]
+    recommended_actions: list[str]
 
 
 class MarketingDemographicRow(BaseSchema):

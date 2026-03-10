@@ -132,6 +132,72 @@ class MarketingWebAnalyticsRepository:
             on_conflict="as_of_date,summary_key",
         )
 
+    def upsert_search_console_daily(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        return self._chunked_upsert(
+            table="marketing_search_console_daily",
+            rows=rows,
+            on_conflict="snapshot_date,country_scope,device_scope",
+            chunk_size=500,
+        )
+
+    def upsert_search_console_query_daily(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        return self._chunked_upsert(
+            table="marketing_search_console_query_daily",
+            rows=rows,
+            on_conflict="snapshot_date,query,country_scope,device_scope",
+            chunk_size=1000,
+        )
+
+    def upsert_search_console_page_daily(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        return self._chunked_upsert(
+            table="marketing_search_console_page_daily",
+            rows=rows,
+            on_conflict="snapshot_date,page_path,country_scope,device_scope",
+            chunk_size=1000,
+        )
+
+    def upsert_search_console_page_query_daily(
+        self, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        return self._chunked_upsert(
+            table="marketing_search_console_page_query_daily",
+            rows=rows,
+            on_conflict="snapshot_date,page_path,query,country_scope,device_scope",
+            chunk_size=1000,
+        )
+
+    def upsert_search_console_country_daily(
+        self, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        return self._chunked_upsert(
+            table="marketing_search_console_country_daily",
+            rows=rows,
+            on_conflict="snapshot_date,country",
+            chunk_size=500,
+        )
+
+    def upsert_search_console_device_daily(
+        self, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        return self._chunked_upsert(
+            table="marketing_search_console_device_daily",
+            rows=rows,
+            on_conflict="snapshot_date,device",
+            chunk_size=500,
+        )
+
     def list_daily_snapshots(self, days_back: int = 120) -> list[dict[str, Any]]:
         start_date = (date.today() - timedelta(days=max(days_back, 1))).isoformat()
         rows, _ = self.client.select(
@@ -269,6 +335,163 @@ class MarketingWebAnalyticsRepository:
         )
         return rows[0] if rows else None
 
+    def latest_search_console_snapshot_date(
+        self,
+        *,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> date | None:
+        filters = [
+            ("country_scope", f"eq.{country_scope}"),
+            ("device_scope", f"eq.{device_scope}"),
+        ]
+        rows, _ = self.client.select(
+            table="marketing_search_console_daily",
+            select="snapshot_date",
+            filters=filters,
+            order="snapshot_date.desc",
+            limit=1,
+        )
+        if not rows:
+            return None
+        snapshot_date = rows[0].get("snapshot_date")
+        if not snapshot_date:
+            return None
+        return date.fromisoformat(str(snapshot_date))
+
+    def get_search_console_insights_rollup(
+        self,
+        *,
+        days_back: int,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> dict[str, Any]:
+        payload = {
+            "p_days_back": days_back,
+            "p_country_scope": country_scope,
+            "p_device_scope": device_scope,
+        }
+        result = self.client.rpc("marketing_search_console_insights_rollup_v1", payload=payload)
+        return result if isinstance(result, dict) else {}
+
+    def get_search_console_us_workspace_rollup(self, *, days_back: int) -> dict[str, Any]:
+        payload = {"p_days_back": days_back}
+        result = self.client.rpc("marketing_search_console_us_workspace_v1", payload=payload)
+        return result if isinstance(result, dict) else {}
+
+    def get_search_console_page_profile_rollup(
+        self,
+        *,
+        days_back: int,
+        page_path: str,
+    ) -> dict[str, Any]:
+        payload = {"p_days_back": days_back, "p_page_path": page_path}
+        result = self.client.rpc("marketing_search_console_page_profile_v1", payload=payload)
+        return result if isinstance(result, dict) else {}
+
+    def list_search_console_daily(
+        self,
+        *,
+        start_date: date,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> list[dict[str, Any]]:
+        rows, _ = self.client.select(
+            table="marketing_search_console_daily",
+            select="snapshot_date,country_scope,device_scope,clicks,impressions,ctr,average_position",
+            filters=[
+                ("snapshot_date", f"gte.{start_date.isoformat()}"),
+                ("country_scope", f"eq.{country_scope}"),
+                ("device_scope", f"eq.{device_scope}"),
+            ],
+            order="snapshot_date.asc",
+            limit=5000,
+        )
+        return rows
+
+    def list_search_console_query_daily(
+        self,
+        *,
+        start_date: date,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> list[dict[str, Any]]:
+        rows, _ = self.client.select(
+            table="marketing_search_console_query_daily",
+            select=(
+                "snapshot_date,query,country_scope,device_scope,clicks,impressions,ctr,"
+                "average_position,is_branded"
+            ),
+            filters=[
+                ("snapshot_date", f"gte.{start_date.isoformat()}"),
+                ("country_scope", f"eq.{country_scope}"),
+                ("device_scope", f"eq.{device_scope}"),
+            ],
+            order="clicks.desc",
+            limit=25000,
+        )
+        return rows
+
+    def list_search_console_page_daily(
+        self,
+        *,
+        start_date: date,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> list[dict[str, Any]]:
+        rows, _ = self.client.select(
+            table="marketing_search_console_page_daily",
+            select="snapshot_date,page_path,country_scope,device_scope,clicks,impressions,ctr,average_position",
+            filters=[
+                ("snapshot_date", f"gte.{start_date.isoformat()}"),
+                ("country_scope", f"eq.{country_scope}"),
+                ("device_scope", f"eq.{device_scope}"),
+            ],
+            order="clicks.desc",
+            limit=25000,
+        )
+        return rows
+
+    def list_search_console_page_query_daily(
+        self,
+        *,
+        start_date: date,
+        country_scope: str = "all",
+        device_scope: str = "all",
+    ) -> list[dict[str, Any]]:
+        rows, _ = self.client.select(
+            table="marketing_search_console_page_query_daily",
+            select="snapshot_date,page_path,query,country_scope,device_scope,clicks,impressions,ctr,average_position",
+            filters=[
+                ("snapshot_date", f"gte.{start_date.isoformat()}"),
+                ("country_scope", f"eq.{country_scope}"),
+                ("device_scope", f"eq.{device_scope}"),
+            ],
+            order="impressions.desc",
+            limit=25000,
+        )
+        return rows
+
+    def list_search_console_country_daily(self, *, start_date: date) -> list[dict[str, Any]]:
+        rows, _ = self.client.select(
+            table="marketing_search_console_country_daily",
+            select="snapshot_date,country,clicks,impressions,ctr,average_position",
+            filters=[("snapshot_date", f"gte.{start_date.isoformat()}")],
+            order="clicks.desc",
+            limit=5000,
+        )
+        return rows
+
+    def list_search_console_device_daily(self, *, start_date: date) -> list[dict[str, Any]]:
+        rows, _ = self.client.select(
+            table="marketing_search_console_device_daily",
+            select="snapshot_date,device,clicks,impressions,ctr,average_position",
+            filters=[("snapshot_date", f"gte.{start_date.isoformat()}")],
+            order="clicks.desc",
+            limit=5000,
+        )
+        return rows
+
     def _chunked_upsert(
         self,
         *,
@@ -289,4 +512,3 @@ class MarketingWebAnalyticsRepository:
             )
             merged.extend(chunk_result)
         return merged
-

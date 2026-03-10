@@ -104,21 +104,7 @@ class DebtServiceService:
         start_date: Optional[date],
         end_date: Optional[date],
     ) -> List[DebtSchedulePoint]:
-        schedule = self.repository.list_schedule(facility_id, start_date, end_date)
-        if schedule:
-            return schedule
-
-        generated = self._generate_and_store_schedule(facility_id)
-        if not generated:
-            return []
-        if start_date or end_date:
-            return [
-                row
-                for row in generated
-                if (not start_date or row.due_date >= start_date)
-                and (not end_date or row.due_date <= end_date)
-            ]
-        return generated
+        return self.repository.list_schedule(facility_id, start_date, end_date)
 
     def list_payments(self, facility_id: str) -> List[DebtPaymentRecord]:
         return self.repository.list_payments(facility_id)
@@ -130,7 +116,10 @@ class DebtServiceService:
 
         schedule = self.repository.list_schedule(payload.facility_id, None, None, limit=1)
         if not schedule:
-            self._generate_and_store_schedule(payload.facility_id)
+            raise BadRequestError(
+                "Debt schedule is not precomputed for this facility. "
+                "Run the debt schedule precompute job before posting payments."
+            )
 
         inserted = self.repository.insert_payment(
             payload={
@@ -295,6 +284,24 @@ class DebtServiceService:
 
     def list_covenant_snapshots(self) -> List[DebtCovenantSnapshot]:
         return self.repository.list_latest_covenant_snapshots()
+
+    def precompute_all_schedules(self) -> dict[str, object]:
+        facilities = self.repository.list_facilities()
+        generated = 0
+        skipped = 0
+        for facility in facilities:
+            existing = self.repository.list_schedule(facility.id, None, None, limit=1)
+            if existing:
+                skipped += 1
+                continue
+            rows = self._generate_and_store_schedule(facility.id)
+            if rows:
+                generated += 1
+        return {
+            "facilityCount": len(facilities),
+            "generatedFacilityCount": generated,
+            "skippedFacilityCount": skipped,
+        }
 
     def _generate_and_store_schedule(self, facility_id: str) -> List[DebtSchedulePoint]:
         facility = self.repository.get_facility(facility_id)

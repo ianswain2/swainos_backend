@@ -146,7 +146,7 @@ class RevenueBookingsRepository:
         start_date: date,
         end_date: date,
         currency_code: Optional[str],
-        limit: int = 2000,
+        limit: int = 10000,
     ) -> List[ApPaymentCalendarRecord]:
         filters = [
             ("payment_date", f"gte.{start_date.isoformat()}"),
@@ -168,7 +168,7 @@ class RevenueBookingsRepository:
         start_date: date,
         end_date: date,
         currency_code: Optional[str],
-        limit: int = 1000,
+        limit: int = 10000,
     ) -> List[ApMonthlyOutflowRecord]:
         start_month = start_date.replace(day=1)
         end_month = end_date.replace(day=1)

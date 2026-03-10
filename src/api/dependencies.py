@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from src.repositories.data_job_repository import DataJobRepository
 from src.repositories.fx_repository import FxRepository
 from src.repositories.marketing_web_analytics_repository import MarketingWebAnalyticsRepository
 from src.repositories.ai_insights_repository import AiInsightsRepository
@@ -27,6 +28,7 @@ from src.services.travel_agents_service import TravelAgentsService
 from src.services.travel_agencies_service import TravelAgenciesService
 from src.services.travel_trade_search_service import TravelTradeSearchService
 from src.services.debt_service_service import DebtServiceService
+from src.services.data_job_service import DataJobService
 from src.integrations.google_analytics_client import GoogleAnalyticsClient
 
 
@@ -155,3 +157,12 @@ def get_marketing_web_analytics_service() -> MarketingWebAnalyticsService:
         repository=get_marketing_web_analytics_repository(),
         ga_client=get_google_analytics_client(),
     )
+
+
+@lru_cache
+def get_data_job_repository() -> DataJobRepository:
+    return DataJobRepository()
+
+
+def get_data_job_service() -> DataJobService:
+    return DataJobService(repository=get_data_job_repository())

@@ -3,23 +3,18 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.concurrency import run_in_threadpool
 
 from src.api.dependencies import get_fx_intelligence_service, get_fx_service
 from src.core.config import get_settings
-from src.core.errors import BadRequestError
 from src.schemas.fx import (
     FxExposure,
     FxHolding,
     FxIntelligenceItem,
-    FxIntelligenceRunRequest,
     FxInvoicePressure,
-    FxManualRunResult,
     FxRate,
-    FxRatePullRunRequest,
     FxSignal,
-    FxSignalRunRequest,
     FxTransaction,
     FxTransactionCreateRequest,
 )
@@ -59,14 +54,6 @@ def _build_meta(
     )
 
 
-def _validate_manual_run_token(x_fx_run_token: Optional[str]) -> None:
-    configured = (get_settings().fx_manual_run_token or "").strip()
-    if not configured:
-        raise BadRequestError("FX manual run endpoint is disabled")
-    if not x_fx_run_token or x_fx_run_token != configured:
-        raise BadRequestError("Invalid FX manual run token")
-
-
 @router.get("/rates")
 async def fx_rates(
     page: int = Query(default=1, ge=1),
@@ -91,21 +78,6 @@ async def fx_rates(
     )
     pagination = build_pagination(page=page, page_size=page_size, total_items=total_count)
     return ResponseEnvelope(data=data, pagination=pagination, meta=meta)
-
-
-@router.post("/rates/run")
-async def fx_rates_run(
-    request: FxRatePullRunRequest,
-    service: FxService = Depends(get_fx_service),
-    x_fx_run_token: Optional[str] = Header(default=None),
-) -> ResponseEnvelope[FxManualRunResult]:
-    _validate_manual_run_token(x_fx_run_token)
-    result = await run_in_threadpool(service.pull_rates, request)
-    return ResponseEnvelope(
-        data=result,
-        pagination=None,
-        meta=_build_meta(source="fx_rate_pull", data_status=result.status),
-    )
 
 
 @router.get("/exposure")
@@ -152,21 +124,6 @@ async def fx_signals(
             is_stale=stale,
             generated_at=latest_generated_at,
         ),
-    )
-
-
-@router.post("/signals/run")
-async def fx_signals_run(
-    request: FxSignalRunRequest,
-    service: FxService = Depends(get_fx_service),
-    x_fx_run_token: Optional[str] = Header(default=None),
-) -> ResponseEnvelope[FxManualRunResult]:
-    _validate_manual_run_token(x_fx_run_token)
-    result = await run_in_threadpool(service.run_signals, request)
-    return ResponseEnvelope(
-        data=result,
-        pagination=None,
-        meta=_build_meta(source="fx_signals_run", data_status=result.status),
     )
 
 
@@ -250,23 +207,6 @@ async def fx_intelligence(
             is_stale=stale,
             generated_at=latest_intelligence_at,
         ),
-    )
-
-
-@router.post("/intelligence/run")
-async def fx_intelligence_run(
-    request: FxIntelligenceRunRequest,
-    service: FxIntelligenceService = Depends(get_fx_intelligence_service),
-    x_fx_run_token: Optional[str] = Header(default=None),
-) -> ResponseEnvelope[FxManualRunResult]:
-    if not get_settings().fx_intelligence_on_demand_enabled:
-        raise BadRequestError("FX intelligence on-demand runs are disabled")
-    _validate_manual_run_token(x_fx_run_token)
-    result = await run_in_threadpool(service.run_intelligence, request)
-    return ResponseEnvelope(
-        data=result,
-        pagination=None,
-        meta=_build_meta(source="fx_intelligence_run", data_status=result.status),
     )
 
 

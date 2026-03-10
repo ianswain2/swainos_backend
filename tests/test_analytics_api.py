@@ -18,6 +18,21 @@ def test_cashflow_timeseries(client):
     assert payload["pagination"]["totalItems"] == 1
 
 
+def test_cashflow_forecast_3m_returns_monthly_points(client):
+    response = client.get("/api/v1/cash-flow/forecast?time_window=3m")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["timeWindow"] == "3m"
+    assert payload["data"]
+    first_currency = payload["data"][0]
+    assert first_currency["timeWindow"] == "3m"
+    assert first_currency["points"]
+    first_point = first_currency["points"][0]
+    # The forecast contract is month-bucketed date ranges, not weekly buckets.
+    assert len(first_point["periodStart"]) == 10
+    assert len(first_point["periodEnd"]) == 10
+
+
 def test_deposits_summary(client):
     response = client.get("/api/v1/deposits/summary")
     assert response.status_code == 200

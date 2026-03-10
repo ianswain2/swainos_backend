@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.concurrency import run_in_threadpool
 
 from src.api.dependencies import get_ai_insights_service
-from src.core.config import get_settings
-from src.core.errors import BadRequestError
 from src.schemas.ai_insights import (
     AiBriefingDaily,
     AiEntityInsightsResponse,
@@ -96,17 +94,6 @@ def get_history_filters(
         page_size=page_size,
         include_totals=include_totals,
     )
-
-
-def require_manual_run_access(
-    x_ai_run_token: Optional[str] = Header(default=None),
-) -> None:
-    settings = get_settings()
-    expected = settings.ai_manual_run_token
-    if not expected:
-        raise BadRequestError("Manual AI run endpoint is disabled")
-    if x_ai_run_token != expected:
-        raise BadRequestError("Invalid manual run token")
 
 
 @router.get("/briefing")
@@ -207,18 +194,4 @@ async def ai_entity_insights(
     return ResponseEnvelope(data=data, pagination=None, meta=meta)
 
 
-@router.post("/run")
-async def ai_run_manual_generation(
-    _: None = Depends(require_manual_run_access),
-    service: AiInsightsService = Depends(get_ai_insights_service),
-) -> ResponseEnvelope[Dict[str, Any]]:
-    data = await run_in_threadpool(service.run_manual_generation, trigger="manual_api")
-    meta = Meta(
-        as_of_date=date.today().isoformat(),
-        source="ai_context_*",
-        time_window="manual",
-        calculation_version="v1",
-        currency=None,
-    )
-    return ResponseEnvelope(data=data, pagination=None, meta=meta)
 
