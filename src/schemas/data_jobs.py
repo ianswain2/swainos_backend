@@ -64,10 +64,17 @@ class DataJobRun(BaseSchema):
     blocked_reason: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+    duration_seconds: int | None = None
+    output_size_bytes: int | None = None
     output: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
+
+
+class DataJobRunFeedEntry(DataJobRun):
+    job_key: str
+    display_name: str
 
 
 class DataJobRunStep(BaseSchema):

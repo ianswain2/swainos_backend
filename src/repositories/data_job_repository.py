@@ -136,9 +136,41 @@ class DataJobRepository:
             table="data_job_runs",
             select=(
                 "id,job_id,run_key,run_status,trigger_type,trigger_source,requested_by,requested_at,started_at,"
-                "finished_at,blocked_reason,error_code,error_message,output,metadata,created_at,updated_at"
+                "finished_at,blocked_reason,error_code,error_message,duration_seconds,output_size_bytes,"
+                "output,metadata,created_at,updated_at"
             ),
             filters=[("job_id", f"eq.{job_id}")],
+            order="created_at.desc",
+            limit=limit,
+            offset=offset,
+            count="exact" if include_totals else "planned",
+        )
+        runs = [DataJobRun.model_validate(row) for row in rows]
+        estimated_total = max(offset + len(runs), len(runs))
+        return runs, (total_count if total_count is not None else estimated_total)
+
+    def list_runs_feed(
+        self,
+        *,
+        job_id: str | None,
+        run_status: str | None,
+        limit: int,
+        offset: int,
+        include_totals: bool,
+    ) -> tuple[list[DataJobRun], int]:
+        filters: list[tuple[str, str]] = []
+        if job_id:
+            filters.append(("job_id", f"eq.{job_id}"))
+        if run_status:
+            filters.append(("run_status", f"eq.{run_status}"))
+        rows, total_count = self.client.select(
+            table="data_job_runs",
+            select=(
+                "id,job_id,run_key,run_status,trigger_type,trigger_source,requested_by,requested_at,started_at,"
+                "finished_at,blocked_reason,error_code,error_message,duration_seconds,output_size_bytes,"
+                "output,metadata,created_at,updated_at"
+            ),
+            filters=filters,
             order="created_at.desc",
             limit=limit,
             offset=offset,
@@ -153,7 +185,8 @@ class DataJobRepository:
             table="data_job_runs",
             select=(
                 "id,job_id,run_key,run_status,trigger_type,trigger_source,requested_by,requested_at,started_at,"
-                "finished_at,blocked_reason,error_code,error_message,output,metadata,created_at,updated_at"
+                "finished_at,blocked_reason,error_code,error_message,duration_seconds,output_size_bytes,"
+                "output,metadata,created_at,updated_at"
             ),
             filters=[("id", f"eq.{run_id}")],
             limit=1,
@@ -274,7 +307,8 @@ class DataJobRepository:
             table="data_job_runs",
             select=(
                 "id,job_id,run_key,run_status,trigger_type,trigger_source,requested_by,requested_at,started_at,"
-                "finished_at,blocked_reason,error_code,error_message,output,metadata,created_at,updated_at"
+                "finished_at,blocked_reason,error_code,error_message,duration_seconds,output_size_bytes,"
+                "output,metadata,created_at,updated_at"
             ),
             filters=[("job_id", f"eq.{job_id}"), ("run_status", "eq.running")],
             limit=5,

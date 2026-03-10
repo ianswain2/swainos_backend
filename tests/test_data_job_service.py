@@ -21,6 +21,7 @@ class _FakeRepository:
         self.running_runs: list[DataJobRun] = []
         self.created_runs: list[DataJobRun] = []
         self.runs_for_job: list[DataJobRun] = []
+        self.run_feed_rows: list[DataJobRun] = []
         self.schedule_next_calls = 0
         self.set_next_run_calls: list[datetime] = []
         self.raise_running_conflict = False
@@ -110,6 +111,8 @@ class _FakeRepository:
         return []
 
     def list_jobs_by_ids(self, ids: list[str]) -> list[DataJob]:
+        if self.job.id in ids:
+            return [self.job]
         return []
 
     def list_runs_for_job(
@@ -123,6 +126,22 @@ class _FakeRepository:
         if self.runs_for_job:
             return (self.runs_for_job[:limit], len(self.runs_for_job))
         return ([], 0)
+
+    def list_runs_feed(
+        self,
+        *,
+        job_id: str | None,
+        run_status: str | None,
+        limit: int,
+        offset: int,
+        include_totals: bool,
+    ) -> tuple[list[DataJobRun], int]:
+        rows = self.run_feed_rows
+        if job_id:
+            rows = [row for row in rows if row.job_id == job_id]
+        if run_status:
+            rows = [row for row in rows if row.run_status == run_status]
+        return (rows[offset : offset + limit], len(rows))
 
     def schedule_next_run(self, job: DataJob) -> DataJob | None:
         self.schedule_next_calls += 1
@@ -265,3 +284,27 @@ def test_run_due_jobs_skips_failed_jobs_until_backoff_elapsed() -> None:
     assert result.dispatched_run_ids == []
     assert len(repository.set_next_run_calls) == 1
     assert repository.created_runs == []
+
+
+def test_list_runs_feed_returns_job_keys_and_filters() -> None:
+    job = _make_job()
+    repository = _FakeRepository(job)
+    repository.run_feed_rows = [
+        _make_run(run_id="failed-1", job_id=job.id, status="failed"),
+        _make_run(run_id="success-1", job_id=job.id, status="success"),
+    ]
+    service = DataJobService(repository=repository, runner_registry={"test.runner": _StubRunner()})
+
+    runs, total = service.list_runs_feed(
+        page=1,
+        page_size=50,
+        include_totals=True,
+        job_key=job.job_key,
+        run_status="failed",
+    )
+
+    assert total == 1
+    assert len(runs) == 1
+    assert runs[0].job_key == job.job_key
+    assert runs[0].display_name == job.display_name
+    assert runs[0].run_status == "failed"

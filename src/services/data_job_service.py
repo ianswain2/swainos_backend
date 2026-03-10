@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -14,7 +15,9 @@ from src.schemas.data_jobs import (
     DataJobHealth,
     DataJobRun,
     DataJobRunDetail,
+    DataJobRunFeedEntry,
     DataJobRunRequest,
+    DataJobRunStatus,
     DataJobUpdateRequest,
 )
 from src.services.job_runners.base import DataJobRunner
@@ -84,6 +87,47 @@ class DataJobService:
             include_totals=include_totals,
         )
         return job, runs, total
+
+    def list_runs_feed(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        include_totals: bool,
+        job_key: str | None,
+        run_status: DataJobRunStatus | None,
+    ) -> tuple[list[DataJobRunFeedEntry], int]:
+        job_id: str | None = None
+        if job_key:
+            job = self.repository.get_job_by_key(job_key)
+            if not job:
+                raise NotFoundError("Data job not found")
+            job_id = job.id
+        offset = max(page - 1, 0) * page_size
+        runs, total = self.repository.list_runs_feed(
+            job_id=job_id,
+            run_status=run_status,
+            limit=page_size,
+            offset=offset,
+            include_totals=include_totals,
+        )
+        job_map = {
+            job.id: job
+            for job in self.repository.list_jobs_by_ids(
+                list({run.job_id for run in runs if run.job_id})
+            )
+        }
+        entries: list[DataJobRunFeedEntry] = []
+        for run in runs:
+            job = job_map.get(run.job_id)
+            entries.append(
+                DataJobRunFeedEntry(
+                    **run.model_dump(),
+                    job_key=job.job_key if job else "unknown",
+                    display_name=job.display_name if job else "Unknown Job",
+                )
+            )
+        return entries, total
 
     def get_run_detail(self, run_id: str) -> DataJobRunDetail:
         run = self.repository.get_run(run_id)
@@ -184,6 +228,8 @@ class DataJobService:
                     "finished_at": self._now_iso(),
                     "error_code": "runner_not_registered",
                     "error_message": f"No runner registered for {job.runner_key}",
+                    "duration_seconds": self._duration_seconds(run.started_at),
+                    "output_size_bytes": self._estimate_output_size_bytes({}),
                 },
             )
             if not failed:
@@ -207,6 +253,8 @@ class DataJobService:
             "output": result.output,
             "error_message": None if result.status == "success" else result.message,
             "error_code": None if result.status == "success" else "runner_failed",
+            "duration_seconds": self._duration_seconds(run.started_at),
+            "output_size_bytes": self._estimate_output_size_bytes(result.output),
         }
         updated = self.repository.update_run(run.id, update_payload)
         if not updated:
@@ -330,6 +378,7 @@ class DataJobService:
                         "Marked failed after exceeding "
                         f"max_runtime_seconds ({job.max_runtime_seconds})."
                     ),
+                    "duration_seconds": int(elapsed_seconds),
                 },
             )
 
@@ -352,3 +401,20 @@ class DataJobService:
         if datetime.now(UTC) < backoff_until:
             return backoff_until
         return None
+
+    @staticmethod
+    def _duration_seconds(started_at: datetime | None) -> int | None:
+        if not started_at:
+            return None
+        elapsed = (datetime.now(UTC) - started_at).total_seconds()
+        if elapsed < 0:
+            return None
+        return int(round(elapsed))
+
+    @staticmethod
+    def _estimate_output_size_bytes(output: Any) -> int:
+        try:
+            serialized = json.dumps(output, separators=(",", ":"), default=str)
+        except (TypeError, ValueError):
+            serialized = str(output)
+        return len(serialized.encode("utf-8"))

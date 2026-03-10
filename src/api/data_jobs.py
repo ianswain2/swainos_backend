@@ -12,7 +12,9 @@ from src.schemas.data_jobs import (
     DataJob,
     DataJobHealth,
     DataJobRun,
+    DataJobRunFeedEntry,
     DataJobRunRequest,
+    DataJobRunStatus,
     DataJobUpdateRequest,
 )
 from src.services.data_job_service import DataJobService
@@ -20,6 +22,7 @@ from src.shared.response import Meta, ResponseEnvelope, build_pagination
 
 router = APIRouter(prefix="/data-jobs", tags=["data-jobs"])
 DATA_JOB_SERVICE_DEP = Depends(get_data_job_service)
+RUN_STATUS_QUERY = Query(default=None)
 
 
 def _meta(source: str) -> Meta:
@@ -79,6 +82,30 @@ async def data_jobs_scheduler_tick(
         trigger_source="scheduler_tick",
     )
     return ResponseEnvelope(data=result, pagination=None, meta=_meta("scheduler_tick"))
+
+
+@router.get("/run-feed")
+async def data_jobs_run_feed(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    include_totals: bool = Query(default=False),
+    job_key: str | None = Query(default=None),
+    run_status: DataJobRunStatus | None = RUN_STATUS_QUERY,
+    service: DataJobService = DATA_JOB_SERVICE_DEP,
+) -> ResponseEnvelope[list[DataJobRunFeedEntry]]:
+    runs, total = await run_in_threadpool(
+        service.list_runs_feed,
+        page=page,
+        page_size=page_size,
+        include_totals=include_totals,
+        job_key=job_key,
+        run_status=run_status,
+    )
+    return ResponseEnvelope(
+        data=runs,
+        pagination=build_pagination(page=page, page_size=page_size, total_items=total),
+        meta=_meta("data_job_runs"),
+    )
 
 
 @router.get("/{job_key}")
