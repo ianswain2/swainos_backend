@@ -2,34 +2,36 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from src.repositories.data_job_repository import DataJobRepository
-from src.repositories.fx_repository import FxRepository
-from src.repositories.marketing_web_analytics_repository import MarketingWebAnalyticsRepository
+from src.integrations.google_analytics_client import GoogleAnalyticsClient
 from src.repositories.ai_insights_repository import AiInsightsRepository
-from src.repositories.itinerary_pipeline_repository import ItineraryPipelineRepository
-from src.repositories.itinerary_destinations_repository import ItineraryDestinationsRepository
-from src.repositories.itinerary_revenue_repository import ItineraryRevenueRepository
-from src.repositories.revenue_bookings_repository import RevenueBookingsRepository
-from src.repositories.travel_consultants_repository import TravelConsultantsRepository
-from src.repositories.travel_agents_repository import TravelAgentsRepository
-from src.repositories.travel_agencies_repository import TravelAgenciesRepository
-from src.repositories.travel_trade_search_repository import TravelTradeSearchRepository
+from src.repositories.auth_access_repository import AuthAccessRepository
+from src.repositories.data_job_repository import DataJobRepository
 from src.repositories.debt_service_repository import DebtServiceRepository
-from src.services.fx_service import FxService
-from src.services.marketing_web_analytics_service import MarketingWebAnalyticsService
-from src.services.fx_intelligence_service import FxIntelligenceService
+from src.repositories.fx_repository import FxRepository
+from src.repositories.itinerary_destinations_repository import ItineraryDestinationsRepository
+from src.repositories.itinerary_pipeline_repository import ItineraryPipelineRepository
+from src.repositories.itinerary_revenue_repository import ItineraryRevenueRepository
+from src.repositories.marketing_web_analytics_repository import MarketingWebAnalyticsRepository
+from src.repositories.revenue_bookings_repository import RevenueBookingsRepository
+from src.repositories.travel_agencies_repository import TravelAgenciesRepository
+from src.repositories.travel_agents_repository import TravelAgentsRepository
+from src.repositories.travel_consultants_repository import TravelConsultantsRepository
+from src.repositories.travel_trade_search_repository import TravelTradeSearchRepository
 from src.services.ai_insights_service import AiInsightsService
-from src.services.itinerary_revenue_service import ItineraryRevenueService
+from src.services.auth_access_service import AuthAccessService
+from src.services.data_job_service import DataJobService
+from src.services.debt_service_service import DebtServiceService
+from src.services.fx_intelligence_service import FxIntelligenceService
+from src.services.fx_service import FxService
 from src.services.itinerary_destinations_service import ItineraryDestinationsService
+from src.services.itinerary_revenue_service import ItineraryRevenueService
+from src.services.marketing_web_analytics_service import MarketingWebAnalyticsService
 from src.services.openai_insights_service import OpenAiInsightsService
 from src.services.revenue_bookings_service import RevenueBookingsService
-from src.services.travel_consultants_service import TravelConsultantsService
-from src.services.travel_agents_service import TravelAgentsService
 from src.services.travel_agencies_service import TravelAgenciesService
+from src.services.travel_agents_service import TravelAgentsService
+from src.services.travel_consultants_service import TravelConsultantsService
 from src.services.travel_trade_search_service import TravelTradeSearchService
-from src.services.debt_service_service import DebtServiceService
-from src.services.data_job_service import DataJobService
-from src.integrations.google_analytics_client import GoogleAnalyticsClient
 
 
 @lru_cache
@@ -166,3 +168,12 @@ def get_data_job_repository() -> DataJobRepository:
 
 def get_data_job_service() -> DataJobService:
     return DataJobService(repository=get_data_job_repository())
+
+
+@lru_cache
+def get_auth_access_repository() -> AuthAccessRepository:
+    return AuthAccessRepository()
+
+
+def get_auth_access_service() -> AuthAccessService:
+    return AuthAccessService(repository=get_auth_access_repository())

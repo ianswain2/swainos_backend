@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
+from src.api.authz import get_current_user_access
 from src.api.dependencies import get_data_job_service
 from src.main import create_app
+from src.schemas.auth_access import AuthenticatedUserAccess
 from src.schemas.data_jobs import DataJobRunFeedEntry
 
 
@@ -52,6 +54,15 @@ class FakeDataJobService:
 def _client() -> TestClient:
     app = create_app()
     app.dependency_overrides[get_data_job_service] = FakeDataJobService
+    app.dependency_overrides[get_current_user_access] = lambda: AuthenticatedUserAccess(
+        user_id="test-admin-id",
+        email="test-admin@example.com",
+        role="admin",
+        is_admin=True,
+        is_active=True,
+        permission_keys=["settings_job_controls", "settings_run_logs"],
+        can_manage_access=True,
+    )
     return TestClient(app)
 
 

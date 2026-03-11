@@ -5,9 +5,11 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api.authz import get_current_user_access
 from src.api.dependencies import get_travel_consultants_service
 from src.core.errors import NotFoundError
 from src.main import create_app
+from src.schemas.auth_access import AuthenticatedUserAccess
 from src.schemas.travel_consultants import (
     TravelConsultantComparisonContext,
     TravelConsultantCompensationImpact,
@@ -85,7 +87,9 @@ class FakeTravelConsultantsService:
             ],
         )
 
-    def get_profile(self, employee_id: str, _: TravelConsultantProfileFilters) -> TravelConsultantProfileResponse:
+    def get_profile(
+        self, employee_id: str, _: TravelConsultantProfileFilters
+    ) -> TravelConsultantProfileResponse:
         employee = TravelConsultantIdentity(
             employee_id=employee_id,
             employee_external_id="005AAA",
@@ -275,7 +279,9 @@ class FakeTravelConsultantsService:
             ),
         )
 
-    def get_forecast(self, employee_id: str, _: TravelConsultantForecastFilters) -> TravelConsultantForecastResponse:
+    def get_forecast(
+        self, employee_id: str, _: TravelConsultantForecastFilters
+    ) -> TravelConsultantForecastResponse:
         return TravelConsultantForecastResponse(
             employee=TravelConsultantIdentity(
                 employee_id=employee_id,
@@ -305,6 +311,15 @@ class FakeTravelConsultantsService:
 def client() -> TestClient:
     app = create_app()
     app.dependency_overrides[get_travel_consultants_service] = FakeTravelConsultantsService
+    app.dependency_overrides[get_current_user_access] = lambda: AuthenticatedUserAccess(
+        user_id="test-admin-id",
+        email="test-admin@example.com",
+        role="admin",
+        is_admin=True,
+        is_active=True,
+        permission_keys=["travel_consultant"],
+        can_manage_access=True,
+    )
     try:
         yield TestClient(app)
     finally:
@@ -312,7 +327,9 @@ def client() -> TestClient:
 
 
 def test_travel_consultants_leaderboard(client: TestClient) -> None:
-    response = client.get("/api/v1/travel-consultants/leaderboard?period_type=monthly&sort_by=booked_revenue")
+    response = client.get(
+        "/api/v1/travel-consultants/leaderboard?period_type=monthly&sort_by=booked_revenue"
+    )
     assert response.status_code == 200
     payload = response.json()
     assert payload["data"]["rankings"][0]["employeeExternalId"] == "005AAA"
@@ -352,7 +369,18 @@ def test_travel_consultants_profile_not_found() -> None:
             raise NotFoundError(f"Travel consultant {employee_id} not found")
 
     app = create_app()
-    app.dependency_overrides[get_travel_consultants_service] = MissingEmployeeTravelConsultantsService
+    app.dependency_overrides[
+        get_travel_consultants_service
+    ] = MissingEmployeeTravelConsultantsService
+    app.dependency_overrides[get_current_user_access] = lambda: AuthenticatedUserAccess(
+        user_id="test-admin-id",
+        email="test-admin@example.com",
+        role="admin",
+        is_admin=True,
+        is_active=True,
+        permission_keys=["travel_consultant"],
+        can_manage_access=True,
+    )
     try:
         test_client = TestClient(app)
         response = test_client.get("/api/v1/travel-consultants/employee-missing/profile")

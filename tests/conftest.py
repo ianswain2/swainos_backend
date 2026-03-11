@@ -5,13 +5,17 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api.authz import get_current_user_access
 from src.api.dependencies import get_revenue_bookings_service
 from src.main import create_app
+from src.schemas.auth_access import AuthenticatedUserAccess
 from src.schemas.common import Lineage
 from src.schemas.revenue_bookings import (
     BookingDetail,
     BookingForecastPoint,
     BookingSummary,
+    CashFlowForecastPoint,
+    CashFlowForecastResponse,
     CashFlowSummary,
     CashFlowTimeseriesPoint,
     DepositSummary,
@@ -69,6 +73,26 @@ class FakeRevenueBookingsService:
             )
         ]
 
+    def get_cashflow_forecast(self, *_: object) -> list[CashFlowForecastResponse]:
+        return [
+            CashFlowForecastResponse(
+                currency_code="USD",
+                time_window="3m",
+                points=[
+                    CashFlowForecastPoint(
+                        period_start=date(2026, 3, 1),
+                        period_end=date(2026, 3, 31),
+                        cash_in=1200,
+                        cash_out=700,
+                        net_cash=500,
+                        projected_ending_cash=2500,
+                        coverage_ratio=1.4,
+                        at_risk=False,
+                    )
+                ],
+            )
+        ]
+
     def get_deposit_summary(self, *_: object) -> list[DepositSummary]:
         return [
             DepositSummary(
@@ -104,4 +128,30 @@ class FakeRevenueBookingsService:
 def client() -> TestClient:
     app = create_app()
     app.dependency_overrides[get_revenue_bookings_service] = FakeRevenueBookingsService
+    app.dependency_overrides[get_current_user_access] = lambda: AuthenticatedUserAccess(
+        user_id="test-admin-id",
+        email="test-admin@example.com",
+        role="admin",
+        is_admin=True,
+        is_active=True,
+        permission_keys=[
+            "command_center",
+            "ai_insights",
+            "itinerary_forecast",
+            "itinerary_actuals",
+            "destination",
+            "travel_consultant",
+            "travel_agencies",
+            "marketing_web_analytics",
+            "search_console_insights",
+            "cash_flow",
+            "debt_service",
+            "fx_command",
+            "operations",
+            "settings_job_controls",
+            "settings_run_logs",
+            "settings_user_access",
+        ],
+        can_manage_access=True,
+    )
     return TestClient(app)

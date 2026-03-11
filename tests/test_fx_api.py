@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import List
 
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api.authz import get_current_user_access
 from src.api.dependencies import get_fx_intelligence_service, get_fx_service
 from src.core.config import get_settings
 from src.main import create_app
+from src.schemas.auth_access import AuthenticatedUserAccess
 from src.schemas.fx import (
     FxExposure,
     FxHolding,
@@ -33,13 +34,13 @@ class FakeFxService:
         page: int = 1,
         page_size: int = 50,
         include_totals: bool = False,
-    ) -> tuple[List[FxRate], int]:
+    ) -> tuple[list[FxRate], int]:
         _ = page, include_totals
         items = [
             FxRate(
                 id="rate-1",
                 currency_pair="USD/AUD",
-                rate_timestamp=datetime.now(timezone.utc),
+                rate_timestamp=datetime.now(UTC),
                 mid_rate=Decimal("1.52"),
                 source="twelve_data",
             )
@@ -56,9 +57,9 @@ class FakeFxService:
         )
 
     def get_latest_rate_timestamp(self) -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
-    def get_exposure(self) -> List[FxExposure]:
+    def get_exposure(self) -> list[FxExposure]:
         return [
             FxExposure(
                 currency_code="AUD",
@@ -74,7 +75,7 @@ class FakeFxService:
         page_size: int = 25,
         include_totals: bool = False,
         currency_code: str | None = None,
-    ) -> tuple[List[FxSignal], int]:
+    ) -> tuple[list[FxSignal], int]:
         _ = page, include_totals
         signal = FxSignal(
             id="signal-1",
@@ -85,7 +86,7 @@ class FakeFxService:
             reason_summary="Test summary",
             source_links=["https://example.com/article"],
             trend_tags=["Policy Risk"],
-            generated_at=datetime.now(timezone.utc),
+            generated_at=datetime.now(UTC),
         )
         items = [signal][:page_size]
         return items, len(items)
@@ -107,7 +108,7 @@ class FakeFxService:
         include_totals: bool = False,
         currency_code: str | None = None,
         transaction_type: str | None = None,
-    ) -> tuple[List[FxTransaction], int]:
+    ) -> tuple[list[FxTransaction], int]:
         _ = page, include_totals
         items = [
             FxTransaction(
@@ -134,7 +135,7 @@ class FakeFxService:
             notes=payload.notes,
         )
 
-    def get_holdings(self, currency_code: str | None = None) -> List[FxHolding]:
+    def get_holdings(self, currency_code: str | None = None) -> list[FxHolding]:
         return [
             FxHolding(
                 id="hold-1",
@@ -143,7 +144,7 @@ class FakeFxService:
             )
         ]
 
-    def get_invoice_pressure(self) -> List[FxInvoicePressure]:
+    def get_invoice_pressure(self) -> list[FxInvoicePressure]:
         return [
             FxInvoicePressure(
                 currency_code="AUD",
@@ -161,7 +162,7 @@ class FakeFxIntelligenceService:
         page_size: int = 50,
         include_totals: bool = False,
         currency_code: str | None = None,
-    ) -> tuple[List[FxIntelligenceItem], int]:
+    ) -> tuple[list[FxIntelligenceItem], int]:
         _ = page, include_totals
         items = [
             FxIntelligenceItem(
@@ -175,7 +176,7 @@ class FakeFxIntelligenceService:
                 trend_tags=["Volatility"],
                 risk_direction="mixed",
                 confidence=Decimal("0.65"),
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
         ][:page_size]
         return items, len(items)
@@ -195,6 +196,15 @@ def client() -> TestClient:
     app = create_app()
     app.dependency_overrides[get_fx_service] = FakeFxService
     app.dependency_overrides[get_fx_intelligence_service] = FakeFxIntelligenceService
+    app.dependency_overrides[get_current_user_access] = lambda: AuthenticatedUserAccess(
+        user_id="test-admin-id",
+        email="test-admin@example.com",
+        role="admin",
+        is_admin=True,
+        is_active=True,
+        permission_keys=["fx_command"],
+        can_manage_access=True,
+    )
     return TestClient(app)
 
 
@@ -233,7 +243,9 @@ def test_create_fx_transaction(client: TestClient) -> None:
     assert payload["currencyCode"] == "AUD"
 
 
-def test_manual_run_token_required_when_configured(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_manual_run_token_required_when_configured(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("FX_MANUAL_RUN_TOKEN", "secret-token")
     get_settings.cache_clear()
     response = client.post("/api/v1/fx/signals/run", json={"runType": "manual"})

@@ -6,8 +6,10 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api.authz import get_current_user_access
 from src.api.dependencies import get_marketing_web_analytics_service
 from src.main import create_app
+from src.schemas.auth_access import AuthenticatedUserAccess
 from src.schemas.marketing_web_analytics import (
     MarketingAiInsight,
     MarketingEventCatalog,
@@ -232,6 +234,15 @@ class FakeMarketingWebAnalyticsService:
 def client() -> TestClient:
     app = create_app()
     app.dependency_overrides[get_marketing_web_analytics_service] = FakeMarketingWebAnalyticsService
+    app.dependency_overrides[get_current_user_access] = lambda: AuthenticatedUserAccess(
+        user_id="test-admin-id",
+        email="test-admin@example.com",
+        role="admin",
+        is_admin=True,
+        is_active=True,
+        permission_keys=["marketing_web_analytics", "search_console_insights"],
+        can_manage_access=True,
+    )
     return TestClient(app)
 
 

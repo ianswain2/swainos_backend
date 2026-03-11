@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
@@ -13,7 +13,7 @@ from src.core.request_context import get_request_id
 class ErrorDetail(BaseModel):
     code: str
     message: str
-    details: Optional[Dict[str, Any]] = None
+    details: dict[str, Any] | None = None
 
 
 class AppError(Exception):
@@ -34,6 +34,16 @@ class BadRequestError(AppError):
         super().__init__(code="bad_request", message=message, status_code=400)
 
 
+class UnauthorizedError(AppError):
+    def __init__(self, message: str = "Authentication required") -> None:
+        super().__init__(code="unauthorized", message=message, status_code=401)
+
+
+class ForbiddenError(AppError):
+    def __init__(self, message: str = "Forbidden") -> None:
+        super().__init__(code="forbidden", message=message, status_code=403)
+
+
 class ErrorEnvelope(BaseModel):
     error: ErrorDetail
 
@@ -45,7 +55,7 @@ def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
 
 
 def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
-    details: Dict[str, Any] = {"errors": exc.errors()}
+    details: dict[str, Any] = {"errors": exc.errors()}
     request_id = get_request_id()
     if request_id:
         details["requestId"] = request_id

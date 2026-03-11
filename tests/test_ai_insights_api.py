@@ -1,22 +1,23 @@
 from __future__ import annotations
 
-from datetime import date, datetime
 import os
-from typing import Any, Dict
+from datetime import date, datetime
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api.authz import get_current_user_access
 from src.api.dependencies import get_ai_insights_service
-from src.core.errors import BadRequestError, NotFoundError
 from src.core.config import get_settings
+from src.core.errors import BadRequestError, NotFoundError
 from src.main import create_app
 from src.schemas.ai_insights import (
     AiBriefingDaily,
     AiEntityInsightsResponse,
+    AiInsightEvent,
     AiInsightEvidence,
     AiInsightEvidenceMetric,
-    AiInsightEvent,
     AiInsightFeedResponse,
     AiInsightHistoryResponse,
     AiInsightsFeedFilters,
@@ -26,6 +27,7 @@ from src.schemas.ai_insights import (
     AiRecommendationQueueResponse,
     AiRecommendationUpdateRequest,
 )
+from src.schemas.auth_access import AuthenticatedUserAccess
 from src.shared.response import build_pagination
 
 
@@ -114,7 +116,9 @@ class FakeAiInsightsService:
         _ = filters
         return AiInsightFeedResponse(items=[self.insight]), build_pagination(1, 25, 1)
 
-    def get_history(self, filters: AiInsightsHistoryFilters) -> tuple[AiInsightHistoryResponse, Any]:
+    def get_history(
+        self, filters: AiInsightsHistoryFilters
+    ) -> tuple[AiInsightHistoryResponse, Any]:
         _ = filters
         return AiInsightHistoryResponse(items=[self.insight]), build_pagination(1, 50, 1)
 
@@ -122,7 +126,9 @@ class FakeAiInsightsService:
         self, filters: AiRecommendationFilters
     ) -> tuple[AiRecommendationQueueResponse, Any]:
         _ = filters
-        return AiRecommendationQueueResponse(items=[self.recommendation]), build_pagination(1, 25, 1)
+        return AiRecommendationQueueResponse(
+            items=[self.recommendation]
+        ), build_pagination(1, 25, 1)
 
     def update_recommendation(
         self, recommendation_id: str, request: AiRecommendationUpdateRequest
@@ -136,9 +142,13 @@ class FakeAiInsightsService:
         return self.recommendation
 
     def get_entity_insights(self, entity_type: str, entity_id: str) -> AiEntityInsightsResponse:
-        return AiEntityInsightsResponse(entity_type=entity_type, entity_id=entity_id, items=[self.insight])
+        return AiEntityInsightsResponse(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            items=[self.insight],
+        )
 
-    def run_manual_generation(self, trigger: str = "manual") -> Dict[str, Any]:
+    def run_manual_generation(self, trigger: str = "manual") -> dict[str, Any]:
         return {
             "runId": "run-1",
             "trigger": trigger,
@@ -155,6 +165,15 @@ def client() -> TestClient:
     app = create_app()
     fake_service = FakeAiInsightsService()
     app.dependency_overrides[get_ai_insights_service] = lambda: fake_service
+    app.dependency_overrides[get_current_user_access] = lambda: AuthenticatedUserAccess(
+        user_id="test-admin-id",
+        email="test-admin@example.com",
+        role="admin",
+        is_admin=True,
+        is_active=True,
+        permission_keys=["ai_insights"],
+        can_manage_access=True,
+    )
     try:
         yield TestClient(app)
     finally:
