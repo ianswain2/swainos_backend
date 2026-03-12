@@ -191,7 +191,7 @@ class TravelAgentsRepository:
         sanitized_values = [value.strip() for value in values if value and value.strip()]
         if not sanitized_values:
             return None
-        escaped_values = [f"\"{value.replace('\"', '\\\"')}\"" for value in sanitized_values]
+        escaped_values = ['"{}"'.format(value.replace('"', '\\"')) for value in sanitized_values]
         return f"in.({','.join(escaped_values)})"
 
     @staticmethod
@@ -199,5 +199,5 @@ class TravelAgentsRepository:
         sanitized_values = [value.strip() for value in values if value and value.strip()]
         if not sanitized_values:
             return None
-        escaped_values = [f"\"{value.replace('\"', '\\\"')}\"" for value in sanitized_values]
+        escaped_values = ['"{}"'.format(value.replace('"', '\\"')) for value in sanitized_values]
         return f"in.({','.join(escaped_values)})"
