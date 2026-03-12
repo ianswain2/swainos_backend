@@ -29,6 +29,26 @@ def test_run_sync_is_overwrite_safe_for_same_day_facts() -> None:
     assert len(repository.overview_rows) == 1
 
 
+def test_run_sync_marks_partial_when_optional_section_fetch_fails() -> None:
+    class PartialFailureSyncService(StubSyncMarketingService):
+        def _fetch_demographics_breakdown(self, days_back: int = 30, country: str | None = None):
+            _ = days_back, country
+            raise RuntimeError("demographics unavailable")
+
+    repository = FakeMarketingRepository()
+    service = PartialFailureSyncService(
+        repository=repository,
+        ga_client=FakeMarketingGaClient(),
+    )
+
+    result = service.run_sync()
+
+    assert result.status == "partial"
+    assert "demographics" in result.message
+    assert repository.sync_runs[-1]["status"] == "partial"
+    assert repository.sync_runs[-1]["error_message"] == "demographics"
+
+
 def test_overview_uses_snapshot_period_users_not_summed_daily_users() -> None:
     repository = FakeMarketingRepository()
     ga_client = FakeMarketingGaClient()

@@ -46,10 +46,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_generation(trigger: str) -> Dict[str, Any]:
-    from src.api.dependencies import get_ai_orchestration_service
+    from src.api.dependencies import get_ai_insights_service
 
-    orchestration_service = get_ai_orchestration_service()
-    return orchestration_service.generate_insights(trigger=trigger)
+    insights_service = get_ai_insights_service()
+    return insights_service.run_manual_generation(trigger=trigger)
 
 
 def refresh_rollups_if_requested(should_refresh: bool) -> None:

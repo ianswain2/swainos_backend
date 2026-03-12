@@ -10,6 +10,7 @@ import httpx
 from src.core.config import get_settings
 from src.repositories.fx_repository import FxRepository
 from src.schemas.fx import FxIntelligenceItem, FxIntelligenceRunRequest, FxManualRunResult
+from src.services.fx_config import parse_target_currencies
 from src.services.openai_insights_service import OpenAiInsightsService
 
 TRUSTED_SOURCE_HOSTS = (
@@ -24,9 +25,6 @@ TRUSTED_SOURCE_HOSTS = (
     "ft.com",
     "wsj.com",
 )
-SUPPORTED_TARGET_CURRENCIES = frozenset({"AUD", "NZD", "ZAR"})
-
-
 class FxIntelligenceService:
     def __init__(
         self,
@@ -39,9 +37,7 @@ class FxIntelligenceService:
         self.logger = logging.getLogger(__name__)
 
     def _target_currencies(self) -> List[str]:
-        raw = self.settings.fx_target_currencies or ""
-        parsed = [item.strip().upper() for item in raw.split(",") if item.strip()]
-        return [item for item in parsed if item in SUPPORTED_TARGET_CURRENCIES]
+        return parse_target_currencies(self.settings.fx_target_currencies)
 
     @staticmethod
     def _now_utc() -> datetime:

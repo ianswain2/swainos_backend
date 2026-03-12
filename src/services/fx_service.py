@@ -23,8 +23,8 @@ from src.schemas.fx import (
     FxTransaction,
     FxTransactionCreateRequest,
 )
+from src.services.fx_config import parse_target_currencies
 
-SUPPORTED_TARGET_CURRENCIES = frozenset({"AUD", "NZD", "ZAR"})
 SUPPORTED_LEDGER_CURRENCIES = frozenset({"USD", "AUD", "NZD", "ZAR"})
 MIN_SIGNAL_RATE_HISTORY_POINTS = 5
 
@@ -36,9 +36,7 @@ class FxService:
         self.logger = logging.getLogger(__name__)
 
     def _target_currencies(self) -> list[str]:
-        raw = self.settings.fx_target_currencies or ""
-        parsed = [item.strip().upper() for item in raw.split(",") if item.strip()]
-        return [item for item in parsed if item in SUPPORTED_TARGET_CURRENCIES]
+        return parse_target_currencies(self.settings.fx_target_currencies)
 
     @staticmethod
     def _now_utc() -> datetime:

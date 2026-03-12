@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -110,6 +111,7 @@ class MarketingWebAnalyticsService:
         self.ga_client = ga_client
         self._gsc_client: GoogleSearchConsoleClient | None = None
         self.settings = get_settings()
+        self.logger = logging.getLogger(__name__)
 
     def _assert_configuration(self) -> None:
         if not (self.settings.google_service_account_key_json or "").strip():
@@ -926,6 +928,24 @@ class MarketingWebAnalyticsService:
         )
         run_id = str(sync_run.get("id") or "")
         try:
+            partial_failures: list[str] = []
+
+            def capture_optional_section(
+                *,
+                section_key: str,
+                fetcher: Any,
+                fallback_value: list[Any],
+            ) -> list[Any]:
+                try:
+                    return fetcher()
+                except Exception:
+                    partial_failures.append(section_key)
+                    self.logger.exception(
+                        "marketing_sync_optional_section_failed",
+                        extra={"section_key": section_key, "run_id": run_id},
+                    )
+                    return fallback_value
+
             daily_rows = self._fetch_daily_totals(days_back=800)
             channel_rows = self._fetch_channel_totals(days_back=800)
             country_rows = self._fetch_country_totals(days_back=800)
@@ -933,18 +953,21 @@ class MarketingWebAnalyticsService:
             events = self._fetch_top_events(limit=20)
             page_activity = self._fetch_page_activity_breakdown(days_back=30)
             geo_breakdown = self._fetch_geo_breakdown(days_back=30)
-            try:
-                demographics = self._fetch_demographics_breakdown(days_back=30)
-            except Exception:
-                demographics = []
-            try:
-                devices = self._fetch_device_breakdown(days_back=30)
-            except Exception:
-                devices = []
-            try:
-                internal_terms = self._fetch_internal_site_search_terms(days_back=30, limit=40)
-            except Exception:
-                internal_terms = []
+            demographics = capture_optional_section(
+                section_key="demographics",
+                fetcher=lambda: self._fetch_demographics_breakdown(days_back=30),
+                fallback_value=[],
+            )
+            devices = capture_optional_section(
+                section_key="devices",
+                fetcher=lambda: self._fetch_device_breakdown(days_back=30),
+                fallback_value=[],
+            )
+            internal_terms = capture_optional_section(
+                section_key="internal_site_search",
+                fetcher=lambda: self._fetch_internal_site_search_terms(days_back=30, limit=40),
+                fallback_value=[],
+            )
 
             page_rows = [
                 {
@@ -1029,21 +1052,29 @@ class MarketingWebAnalyticsService:
                 + len(internal_search_rows)
                 + len(overview_period_rows)
             )
+            run_status = "partial" if partial_failures else "success"
+            run_message = "GA4 marketing analytics snapshots refreshed"
+            if partial_failures:
+                run_message = (
+                    "GA4 marketing analytics snapshots refreshed with partial data gaps in: "
+                    f"{', '.join(partial_failures)}"
+                )
             self.repository.update_sync_run(
                 run_id,
                 {
-                    "status": "success",
+                    "status": run_status,
                     "records_processed": records_processed,
                     "records_created": records_processed,
+                    "error_message": "; ".join(partial_failures) if partial_failures else None,
                     "completed_at": datetime.now(UTC).isoformat(),
                 },
             )
             return MarketingWebAnalyticsSyncResult(
                 run_id=run_id or "n/a",
-                status="success",
+                status=run_status,
                 records_processed=records_processed,
                 records_created=records_processed,
-                message="GA4 marketing analytics snapshots refreshed",
+                message=run_message,
             )
         except Exception as exc:
             if run_id:

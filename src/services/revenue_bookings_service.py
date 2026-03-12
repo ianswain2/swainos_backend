@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, timedelta
-from decimal import Decimal
+import logging
 from typing import Dict, List, Optional, Tuple
 
 from src.analytics.booking_forecast import forecast_bookings
 from src.analytics.cash_flow import calculate_cashflow_summary, calculate_cashflow_timeseries
-from src.core.errors import NotFoundError
+from src.core.errors import AppError, NotFoundError
 from src.models.revenue_bookings import BookingRecord
 from src.repositories.revenue_bookings_repository import RevenueBookingsRepository
 from src.schemas.revenue_bookings import (
@@ -44,6 +44,7 @@ class RevenueBookingsService:
 
     def __init__(self, repository: RevenueBookingsRepository) -> None:
         self.repository = repository
+        self.logger = logging.getLogger(__name__)
 
     def list_bookings(
         self,
@@ -540,8 +541,19 @@ class RevenueBookingsService:
     def get_itinerary_trends(self, start_date: date, end_date: date) -> ItineraryTrendsResponse:
         try:
             records = self.repository.list_itinerary_trends(start_date, end_date)
-        except Exception:
-            return self._empty_itinerary_trends_response()
+        except Exception as exc:
+            self.logger.exception(
+                "itinerary_trends_query_failed",
+                extra={
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                },
+            )
+            raise AppError(
+                code="itinerary_trends_unavailable",
+                message="Unable to load itinerary trends right now.",
+                status_code=503,
+            ) from exc
 
         timeline = [
             ItineraryTrendPoint(
@@ -568,22 +580,22 @@ class RevenueBookingsService:
 
         return ItineraryTrendsResponse(summary=summary, timeline=timeline)
 
-    def _empty_itinerary_trends_response(self) -> ItineraryTrendsResponse:
-        return ItineraryTrendsResponse(
-            summary=ItineraryTrendsSummary(
-                created_itineraries=0,
-                closed_itineraries=0,
-                travel_start_itineraries=0,
-                travel_end_itineraries=0,
-            ),
-            timeline=[],
-        )
-
     def get_itinerary_lead_flow(self, start_date: date, end_date: date) -> ItineraryLeadFlowResponse:
         try:
             records = self.repository.list_itinerary_lead_flow(start_date, end_date)
-        except Exception:
-            return self._empty_itinerary_lead_flow_response()
+        except Exception as exc:
+            self.logger.exception(
+                "itinerary_lead_flow_query_failed",
+                extra={
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                },
+            )
+            raise AppError(
+                code="itinerary_lead_flow_unavailable",
+                message="Unable to load itinerary lead flow right now.",
+                status_code=503,
+            ) from exc
 
         timeline: List[ItineraryLeadFlowPoint] = []
         for record in records:
@@ -613,17 +625,6 @@ class RevenueBookingsService:
         )
 
         return ItineraryLeadFlowResponse(summary=summary, timeline=timeline)
-
-    def _empty_itinerary_lead_flow_response(self) -> ItineraryLeadFlowResponse:
-        return ItineraryLeadFlowResponse(
-            summary=ItineraryLeadFlowSummary(
-                created_itineraries=0,
-                closed_won_itineraries=0,
-                closed_lost_itineraries=0,
-                conversion_rate=0.0,
-            ),
-            timeline=[],
-        )
 
     def _to_booking_summary(self, record: BookingRecord) -> BookingSummary:
         return BookingSummary(
