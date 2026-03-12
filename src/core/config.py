@@ -16,6 +16,16 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     api_prefix: str = "/api/v1"
     cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    trusted_hosts: str = Field(
+        default="localhost,127.0.0.1,testserver",
+        alias="TRUSTED_HOSTS",
+    )
+    expensive_run_rate_limit_per_minute: int = Field(
+        default=10, alias="EXPENSIVE_RUN_RATE_LIMIT_PER_MINUTE", ge=1, le=1000
+    )
+    mutation_rate_limit_per_minute: int = Field(
+        default=30, alias="MUTATION_RATE_LIMIT_PER_MINUTE", ge=1, le=2000
+    )
 
     supabase_url: str = Field(..., alias="SUPABASE_URL")
     supabase_service_role_key: Optional[str] = Field(
@@ -26,12 +36,25 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
     openai_model_decision: str = Field(default="gpt-5.2", alias="OPENAI_MODEL_DECISION")
     openai_model_support: str = Field(default="gpt-5-mini", alias="OPENAI_MODEL_SUPPORT")
-    openai_max_retries: int = Field(default=2, alias="OPENAI_MAX_RETRIES")
-    openai_timeout_seconds: float = Field(default=60.0, alias="OPENAI_TIMEOUT_SECONDS")
+    openai_max_retries: int = Field(default=2, alias="OPENAI_MAX_RETRIES", ge=0, le=5)
+    openai_max_fallback_models: int = Field(
+        default=2, alias="OPENAI_MAX_FALLBACK_MODELS", ge=0, le=5
+    )
+    openai_timeout_seconds: float = Field(
+        default=60.0, alias="OPENAI_TIMEOUT_SECONDS", gt=0.0, le=180.0
+    )
 
     ai_generation_enabled: bool = Field(default=True, alias="AI_GENERATION_ENABLED")
     ai_allow_support_for_decision: bool = Field(default=False, alias="AI_ALLOW_SUPPORT_FOR_DECISION")
-    ai_max_consultants_per_run: int = Field(default=25, alias="AI_MAX_CONSULTANTS_PER_RUN")
+    ai_max_consultants_per_run: int = Field(
+        default=25, alias="AI_MAX_CONSULTANTS_PER_RUN", ge=1, le=200
+    )
+    ai_max_model_calls_per_run: int = Field(
+        default=60, alias="AI_MAX_MODEL_CALLS_PER_RUN", ge=1, le=500
+    )
+    ai_max_tokens_per_run: int = Field(
+        default=120000, alias="AI_MAX_TOKENS_PER_RUN", ge=1000, le=1000000
+    )
     ai_manual_run_token: Optional[str] = Field(default=None, alias="AI_MANUAL_RUN_TOKEN")
 
     fx_manual_run_token: Optional[str] = Field(default=None, alias="FX_MANUAL_RUN_TOKEN")
@@ -95,9 +118,42 @@ def get_cors_origins() -> list[str]:
     return [origin.strip() for origin in settings.cors_allow_origins.split(",") if origin.strip()]
 
 
+def get_trusted_hosts() -> list[str]:
+    settings = get_settings()
+    hosts = [host.strip() for host in settings.trusted_hosts.split(",") if host.strip()]
+    return hosts or ["localhost", "127.0.0.1", "testserver"]
+
+
+def _is_local_trusted_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    if not normalized:
+        return True
+    if normalized in {"localhost", "127.0.0.1", "testserver"}:
+        return True
+    return normalized.startswith("localhost:") or normalized.startswith("127.0.0.1:")
+
+
 def validate_runtime_settings() -> None:
     settings = get_settings()
     if not settings.supabase_url:
         raise ValueError("SUPABASE_URL is required")
     if not (settings.supabase_service_role_key or settings.supabase_anon_key):
         raise ValueError("SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY is required")
+    if settings.environment.strip().lower() == "production":
+        trusted_hosts = get_trusted_hosts()
+        if not trusted_hosts:
+            raise ValueError("TRUSTED_HOSTS must include at least one production hostname")
+        if all(_is_local_trusted_host(host) for host in trusted_hosts):
+            raise ValueError(
+                "TRUSTED_HOSTS must include at least one non-local production hostname"
+            )
+        required_tokens = {
+            "AI_MANUAL_RUN_TOKEN": settings.ai_manual_run_token,
+            "FX_MANUAL_RUN_TOKEN": settings.fx_manual_run_token,
+            "DATA_JOBS_SCHEDULER_TOKEN": settings.data_jobs_scheduler_token,
+        }
+        missing = [key for key, value in required_tokens.items() if not (value or "").strip()]
+        if missing:
+            raise ValueError(
+                "Missing required production run token(s): " + ", ".join(sorted(missing))
+            )

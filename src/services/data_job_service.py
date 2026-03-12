@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -32,6 +33,7 @@ class DataJobService:
     ) -> None:
         self.repository = repository
         self.runner_registry = runner_registry or build_default_runner_registry()
+        self.logger = logging.getLogger(__name__)
 
     def list_jobs(
         self,
@@ -236,8 +238,17 @@ class DataJobService:
                 raise NotFoundError("Data run not found")
             return failed
 
-        result = runner.run(job_key=job.job_key, run_id=run.id, metadata=payload.metadata)
+        result = runner.run(
+            job_key=job.job_key,
+            run_id=run.id,
+            metadata=payload.metadata,
+            max_runtime_seconds=job.max_runtime_seconds,
+        )
         step_status = "success" if result.status == "success" else "failed"
+        timed_out = bool(result.output.get("timedOut")) if isinstance(result.output, dict) else False
+        error_code = None if result.status == "success" else "runner_failed"
+        if timed_out:
+            error_code = "runner_timeout_killed"
         self.repository.update_run_step(
             step.id,
             {
@@ -252,13 +263,24 @@ class DataJobService:
             "finished_at": self._now_iso(),
             "output": result.output,
             "error_message": None if result.status == "success" else result.message,
-            "error_code": None if result.status == "success" else "runner_failed",
+            "error_code": error_code,
             "duration_seconds": self._duration_seconds(run.started_at),
             "output_size_bytes": self._estimate_output_size_bytes(result.output),
         }
         updated = self.repository.update_run(run.id, update_payload)
         if not updated:
             raise NotFoundError("Data run not found")
+        self.logger.info(
+            "data_job_run_completed",
+            extra={
+                "jobKey": job.job_key,
+                "runId": run.id,
+                "runStatus": updated.run_status,
+                "durationSeconds": updated.duration_seconds,
+                "outputSizeBytes": updated.output_size_bytes,
+                "runnerTimeoutKilled": timed_out,
+            },
+        )
         if payload.trigger_type == "scheduler":
             self.repository.schedule_next_run(job)
         return updated
@@ -379,6 +401,15 @@ class DataJobService:
                         f"max_runtime_seconds ({job.max_runtime_seconds})."
                     ),
                     "duration_seconds": int(elapsed_seconds),
+                },
+            )
+            self.logger.warning(
+                "data_job_run_marked_stale_timeout",
+                extra={
+                    "jobKey": job.job_key,
+                    "runId": run.id,
+                    "elapsedSeconds": int(elapsed_seconds),
+                    "maxRuntimeSeconds": job.max_runtime_seconds,
                 },
             )
 

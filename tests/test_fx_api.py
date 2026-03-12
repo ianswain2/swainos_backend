@@ -249,5 +249,5 @@ def test_manual_run_token_required_when_configured(
     monkeypatch.setenv("FX_MANUAL_RUN_TOKEN", "secret-token")
     get_settings.cache_clear()
     response = client.post("/api/v1/fx/signals/run", json={"runType": "manual"})
-    assert response.status_code == 400
+    assert response.status_code == 401
     get_settings.cache_clear()

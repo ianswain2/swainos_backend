@@ -23,6 +23,32 @@ class ModelExecutionResult:
     used_fallback: bool
 
 
+@dataclass
+class ModelRunBudget:
+    max_model_calls: int
+    max_tokens: int
+    model_calls: int = 0
+    tokens_used: int = 0
+
+    def consume_call(self) -> None:
+        self.model_calls += 1
+        if self.model_calls > self.max_model_calls:
+            raise BadRequestError(
+                "AI budget exceeded: max model calls reached "
+                f"({self.max_model_calls})"
+            )
+
+    def consume_tokens(self, tokens: int) -> None:
+        if tokens <= 0:
+            return
+        self.tokens_used += tokens
+        if self.tokens_used > self.max_tokens:
+            raise BadRequestError(
+                "AI budget exceeded: max tokens reached "
+                f"({self.max_tokens})"
+            )
+
+
 class OpenAiInsightsService:
     TIER_DECISION = "decision"
     TIER_SUPPORT = "support"
@@ -40,6 +66,7 @@ class OpenAiInsightsService:
         system_prompt: str,
         user_payload: Dict[str, Any],
         fallback_payload: Dict[str, Any],
+        run_budget: ModelRunBudget | None = None,
     ) -> ModelExecutionResult:
         self._validate_tier_for_operation(operation=operation, tier=tier)
         primary_model_name = self._resolve_model_for_tier(tier)
@@ -49,7 +76,9 @@ class OpenAiInsightsService:
             raise BadRequestError("OPENAI_API_KEY is required for AI insight generation")
 
         attempts = max(self.settings.openai_max_retries, 0) + 1
-        fallback_models = self._fallback_models_for_tier(tier)
+        fallback_models = self._fallback_models_for_tier(tier)[
+            : self.settings.openai_max_fallback_models
+        ]
         candidate_models: list[str] = [primary_model_name]
         for fallback_model in fallback_models:
             if fallback_model not in candidate_models:
@@ -60,6 +89,8 @@ class OpenAiInsightsService:
             for _ in range(attempts):
                 started = time.perf_counter()
                 try:
+                    if run_budget is not None:
+                        run_budget.consume_call()
                     response = httpx.post(
                         "https://api.openai.com/v1/chat/completions",
                         headers={
@@ -92,6 +123,8 @@ class OpenAiInsightsService:
                     usage = payload.get("usage") or {}
                     latency_ms = int((time.perf_counter() - started) * 1000)
                     tokens_used = int(usage.get("total_tokens", 0) or 0)
+                    if run_budget is not None:
+                        run_budget.consume_tokens(tokens_used)
                     return ModelExecutionResult(
                         payload=structured_payload,
                         model_name=model_name,

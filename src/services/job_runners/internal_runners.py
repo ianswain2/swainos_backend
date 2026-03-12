@@ -6,7 +6,14 @@ from src.services.job_runners.base import RunnerResult
 class FxSignalsRunner:
     runner_key = "fx.signals.generate"
 
-    def run(self, job_key: str, run_id: str, metadata: dict[str, object]) -> RunnerResult:
+    def run(
+        self,
+        job_key: str,
+        run_id: str,
+        metadata: dict[str, object],
+        max_runtime_seconds: int | None = None,
+    ) -> RunnerResult:
+        _ = max_runtime_seconds
         from src.api.dependencies import get_fx_service
         from src.schemas.fx import FxSignalRunRequest
 
@@ -22,7 +29,14 @@ class FxSignalsRunner:
 class AiInsightsRunner:
     runner_key = "ai.insights.generate"
 
-    def run(self, job_key: str, run_id: str, metadata: dict[str, object]) -> RunnerResult:
+    def run(
+        self,
+        job_key: str,
+        run_id: str,
+        metadata: dict[str, object],
+        max_runtime_seconds: int | None = None,
+    ) -> RunnerResult:
+        _ = max_runtime_seconds
         from src.api.dependencies import get_ai_insights_service
 
         service = get_ai_insights_service()
@@ -37,7 +51,14 @@ class AiInsightsRunner:
 class DebtSchedulePrecomputeRunner:
     runner_key = "debt.schedule.precompute"
 
-    def run(self, job_key: str, run_id: str, metadata: dict[str, object]) -> RunnerResult:
+    def run(
+        self,
+        job_key: str,
+        run_id: str,
+        metadata: dict[str, object],
+        max_runtime_seconds: int | None = None,
+    ) -> RunnerResult:
+        _ = max_runtime_seconds
         from src.api.dependencies import get_debt_service_service
 
         service = get_debt_service_service()

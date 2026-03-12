@@ -6,8 +6,9 @@ from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
 from src.core.config import get_settings
+from src.core.errors import BadRequestError
 from src.repositories.ai_insights_repository import AiInsightsRepository
-from src.services.openai_insights_service import OpenAiInsightsService
+from src.services.openai_insights_service import ModelRunBudget, OpenAiInsightsService
 from src.schemas.travel_consultants import TravelConsultantLeaderboardFilters
 from src.services.travel_consultants_service import TravelConsultantsService
 
@@ -47,18 +48,45 @@ class AiOrchestrationService:
         run_id = str(uuid4())
         generated_events: List[Dict[str, Any]] = []
         consultant_pairs: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+        run_budget = ModelRunBudget(
+            max_model_calls=self.settings.ai_max_model_calls_per_run,
+            max_tokens=self.settings.ai_max_tokens_per_run,
+        )
+        budget_exceeded = False
+        budget_reason: str | None = None
 
-        briefing_result = self._generate_command_center_briefing(run_id=run_id)
+        try:
+            briefing_result = self._generate_command_center_briefing(
+                run_id=run_id,
+                run_budget=run_budget,
+            )
+        except BadRequestError as exc:
+            if "AI budget exceeded" in str(exc):
+                briefing_result = {}
+                budget_exceeded = True
+                budget_reason = str(exc)
+            else:
+                raise
 
         consultant_context_rows_raw = self._get_consultant_context_rows()
         consultant_context_rows = self._filter_existing_consultants(consultant_context_rows_raw)
         for consultant_row in consultant_context_rows:
+            if budget_exceeded:
+                break
             if not self._is_consultant_actionable(consultant_row):
                 continue
-            event, recommendation = self._generate_consultant_recommendation(
-                run_id=run_id,
-                consultant_row=consultant_row,
-            )
+            try:
+                event, recommendation = self._generate_consultant_recommendation(
+                    run_id=run_id,
+                    consultant_row=consultant_row,
+                    run_budget=run_budget,
+                )
+            except BadRequestError as exc:
+                if "AI budget exceeded" in str(exc):
+                    budget_exceeded = True
+                    budget_reason = str(exc)
+                    break
+                raise
             consultant_pairs.append((event, recommendation))
 
         itinerary_context_rows = self.repository.list_itinerary_health_context(limit=1)
@@ -82,11 +110,19 @@ class AiOrchestrationService:
         return {
             "runId": run_id,
             "trigger": trigger,
-            "status": "completed",
+            "status": "partial" if budget_exceeded else "completed",
             "createdEvents": len(inserted_events),
             "createdRecommendations": len(inserted_recommendations),
             "briefingGenerated": bool(briefing_result),
             "consultantsEvaluated": len(consultant_context_rows),
+            "budget": {
+                "maxModelCalls": run_budget.max_model_calls,
+                "maxTokens": run_budget.max_tokens,
+                "modelCallsUsed": run_budget.model_calls,
+                "tokensUsed": run_budget.tokens_used,
+                "exceeded": budget_exceeded,
+                "reason": budget_reason,
+            },
         }
 
     def _get_consultant_context_rows(self) -> List[Dict[str, Any]]:
@@ -373,7 +409,11 @@ class AiOrchestrationService:
             filtered_rows.append(row)
         return filtered_rows
 
-    def _generate_command_center_briefing(self, run_id: str) -> Dict[str, Any]:
+    def _generate_command_center_briefing(
+        self,
+        run_id: str,
+        run_budget: ModelRunBudget,
+    ) -> Dict[str, Any]:
         context_rows = self.repository.list_command_center_context()
         if not context_rows:
             return {}
@@ -405,6 +445,7 @@ class AiOrchestrationService:
                 ],
             },
             fallback_payload=fallback_payload,
+            run_budget=run_budget,
         )
         payload = model_result.payload
         normalized_highlights = self._normalize_briefing_items(
@@ -448,6 +489,7 @@ class AiOrchestrationService:
         *,
         run_id: str,
         consultant_row: Dict[str, Any],
+        run_budget: ModelRunBudget,
     ) -> tuple[Dict[str, Any], Dict[str, Any]]:
         fallback_payload = self._build_consultant_fallback_payload(consultant_row)
         model_result = self.openai_service.build_structured_output(
@@ -475,6 +517,7 @@ class AiOrchestrationService:
                 ],
             },
             fallback_payload=fallback_payload,
+            run_budget=run_budget,
         )
         payload = model_result.payload
         title = self._normalize_consultant_title(

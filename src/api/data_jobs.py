@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from datetime import date
+import logging
+import time
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.concurrency import run_in_threadpool
 
 from src.api.dependencies import get_data_job_service
+from src.api.rate_limits import enforce_expensive_run_limit, enforce_mutation_limit
 from src.core.config import get_settings
-from src.core.errors import BadRequestError
+from src.core.errors import UnauthorizedError
 from src.schemas.data_jobs import (
     DataJob,
     DataJobHealth,
@@ -23,6 +26,7 @@ from src.shared.response import Meta, ResponseEnvelope, build_pagination
 router = APIRouter(prefix="/data-jobs", tags=["data-jobs"])
 DATA_JOB_SERVICE_DEP = Depends(get_data_job_service)
 RUN_STATUS_QUERY = Query(default=None)
+logger = logging.getLogger(__name__)
 
 
 def _meta(source: str) -> Meta:
@@ -69,17 +73,36 @@ async def data_jobs_health(
 
 @router.post("/scheduler/tick")
 async def data_jobs_scheduler_tick(
+    request: Request,
     max_jobs: int = Query(default=5, ge=1, le=50),
     x_scheduler_token: str | None = Header(default=None),
     service: DataJobService = DATA_JOB_SERVICE_DEP,
 ):
-    configured = (get_settings().data_jobs_scheduler_token or "").strip()
+    enforce_expensive_run_limit(request, "data_jobs_scheduler_tick")
+    settings = get_settings()
+    configured = (settings.data_jobs_scheduler_token or "").strip()
+    is_production = settings.environment.strip().lower() == "production"
+    if is_production and not configured:
+        raise UnauthorizedError("Scheduler token is not configured")
     if configured and x_scheduler_token != configured:
-        raise BadRequestError("Invalid scheduler token")
+        raise UnauthorizedError("Invalid scheduler token")
+    started = time.perf_counter()
     result = await run_in_threadpool(
         service.run_due_jobs,
         max_jobs=max_jobs,
         trigger_source="scheduler_tick",
+    )
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "data_jobs_scheduler_tick_completed",
+        extra={
+            "endpoint": "/api/v1/data-jobs/scheduler/tick",
+            "durationMs": elapsed_ms,
+            "selectedJobs": len(result.selected_job_keys),
+            "dispatchedRuns": len(result.dispatched_run_ids),
+            "blockedJobs": len(result.blocked_job_keys),
+            "clientIp": request.client.host if request.client else "unknown",
+        },
     )
     return ResponseEnvelope(data=result, pagination=None, meta=_meta("scheduler_tick"))
 
@@ -119,21 +142,46 @@ async def data_jobs_get(
 
 @router.patch("/{job_key}")
 async def data_jobs_patch(
+    request_ctx: Request,
     job_key: str,
     request: DataJobUpdateRequest,
     service: DataJobService = DATA_JOB_SERVICE_DEP,
 ) -> ResponseEnvelope[DataJob]:
+    enforce_mutation_limit(request_ctx, "data_jobs_patch")
+    started = time.perf_counter()
     updated = await run_in_threadpool(service.update_job, job_key, request)
+    logger.info(
+        "data_jobs_patch_completed",
+        extra={
+            "endpoint": "/api/v1/data-jobs/{job_key}",
+            "jobKey": job_key,
+            "durationMs": int((time.perf_counter() - started) * 1000),
+            "clientIp": request_ctx.client.host if request_ctx.client else "unknown",
+        },
+    )
     return ResponseEnvelope(data=updated, pagination=None, meta=_meta("data_jobs"))
 
 
 @router.post("/{job_key}/runs")
 async def data_jobs_run(
+    request_ctx: Request,
     job_key: str,
     request: DataJobRunRequest,
     service: DataJobService = DATA_JOB_SERVICE_DEP,
 ) -> ResponseEnvelope[DataJobRun]:
+    enforce_expensive_run_limit(request_ctx, "data_jobs_run")
+    started = time.perf_counter()
     run = await run_in_threadpool(service.run_job, job_key, request)
+    logger.info(
+        "data_jobs_run_completed",
+        extra={
+            "endpoint": "/api/v1/data-jobs/{job_key}/runs",
+            "jobKey": job_key,
+            "runStatus": run.run_status,
+            "durationMs": int((time.perf_counter() - started) * 1000),
+            "clientIp": request_ctx.client.host if request_ctx.client else "unknown",
+        },
+    )
     return ResponseEnvelope(data=run, pagination=None, meta=_meta("data_jobs"))
 
 

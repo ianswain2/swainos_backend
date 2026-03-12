@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -22,7 +24,14 @@ class SubprocessScriptRunner:
         self.extra_args = extra_args or []
         self.project_root = Path(__file__).resolve().parents[3]
 
-    def run(self, job_key: str, run_id: str, metadata: dict[str, Any]) -> RunnerResult:
+    def run(
+        self,
+        job_key: str,
+        run_id: str,
+        metadata: dict[str, Any],
+        max_runtime_seconds: int | None = None,
+    ) -> RunnerResult:
+        _ = job_key, run_id, metadata
         script_path = self.project_root / self.script_relative_path
         if not script_path.exists():
             return RunnerResult(
@@ -32,27 +41,55 @@ class SubprocessScriptRunner:
             )
 
         command = [sys.executable, str(script_path), *self.extra_args]
-        completed = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=str(self.project_root),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
+            start_new_session=True,
         )
+        timed_out = False
+        try:
+            stdout, stderr = process.communicate(timeout=max_runtime_seconds)
+            return_code = process.returncode or 0
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            stdout = exc.output or ""
+            stderr = exc.stderr or ""
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                process.kill()
+            process.wait()
+            return_code = process.returncode or -9
         output: dict[str, Any] = {
-            "returnCode": completed.returncode,
-            "stdout": completed.stdout[-4000:],
-            "stderr": completed.stderr[-4000:],
+            "returnCode": return_code,
+            "stdout": stdout[-4000:],
+            "stderr": stderr[-4000:],
             "command": command,
+            "timedOut": timed_out,
+            "maxRuntimeSeconds": max_runtime_seconds,
         }
-        parsed_json = self._try_parse_json(completed.stdout)
+        parsed_json = self._try_parse_json(stdout)
         if parsed_json is not None:
             output["parsed"] = parsed_json
 
-        if completed.returncode != 0:
+        if timed_out:
             return RunnerResult(
                 status="failed",
-                message=f"{self.runner_key} failed with exit code {completed.returncode}",
+                message=(
+                    f"{self.runner_key} exceeded max runtime ({max_runtime_seconds}s) "
+                    "and was terminated"
+                ),
+                output=output,
+            )
+        if return_code != 0:
+            return RunnerResult(
+                status="failed",
+                message=f"{self.runner_key} failed with exit code {return_code}",
                 output=output,
             )
         return RunnerResult(

@@ -5,10 +5,16 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import Request
 
 from src.api.router import api_router
-from src.core.config import get_cors_origins, get_settings, validate_runtime_settings
+from src.core.config import (
+    get_cors_origins,
+    get_settings,
+    get_trusted_hosts,
+    validate_runtime_settings,
+)
 from src.core.errors import AppError, app_error_handler, validation_error_handler
 from src.core.logging import configure_logging
 from src.core.request_context import set_request_id
@@ -20,6 +26,11 @@ def create_app() -> FastAPI:
     validate_runtime_settings()
 
     app = FastAPI(title=settings.app_name)
+    if settings.environment.strip().lower() == "production":
+        app.add_middleware(
+            TrustedHostMiddleware,
+            allowed_hosts=get_trusted_hosts(),
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=get_cors_origins(),

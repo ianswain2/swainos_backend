@@ -15,5 +15,11 @@ class RunnerResult:
 class DataJobRunner(Protocol):
     runner_key: str
 
-    def run(self, job_key: str, run_id: str, metadata: dict[str, Any]) -> RunnerResult:
+    def run(
+        self,
+        job_key: str,
+        run_id: str,
+        metadata: dict[str, Any],
+        max_runtime_seconds: int | None = None,
+    ) -> RunnerResult:
         ...

@@ -48,11 +48,12 @@ async def health_check_readiness() -> JSONResponse:
         client = SupabaseClient()
         await run_in_threadpool(client.select, "fx_rates", "id", None, 1)
     except Exception as exc:
+        _ = exc
         envelope = ErrorEnvelope(
             error=ErrorDetail(
                 code="dependency_unavailable",
                 message="Readiness check failed",
-                details={"dependency": "supabase", "reason": str(exc)},
+                details={"dependency": "supabase"},
             )
         )
         return JSONResponse(status_code=503, content=envelope.model_dump())

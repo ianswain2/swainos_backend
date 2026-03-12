@@ -227,5 +227,5 @@ def test_ai_manual_run(client: TestClient) -> None:
 
 def test_ai_manual_run_requires_token(client: TestClient) -> None:
     response = client.post("/api/v1/ai-insights/run")
-    assert response.status_code == 400
+    assert response.status_code == 401
 

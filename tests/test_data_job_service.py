@@ -11,7 +11,14 @@ from src.services.job_runners.base import RunnerResult
 
 
 class _StubRunner:
-    def run(self, job_key: str, run_id: str, metadata: dict[str, Any]) -> RunnerResult:
+    def run(
+        self,
+        job_key: str,
+        run_id: str,
+        metadata: dict[str, Any],
+        max_runtime_seconds: int | None = None,
+    ) -> RunnerResult:
+        _ = max_runtime_seconds
         return RunnerResult(status="success", message="ok", output={})
 
 
@@ -308,3 +315,37 @@ def test_list_runs_feed_returns_job_keys_and_filters() -> None:
     assert runs[0].job_key == job.job_key
     assert runs[0].display_name == job.display_name
     assert runs[0].run_status == "failed"
+
+
+def test_run_job_marks_timeout_killed_error_code() -> None:
+    class _TimeoutRunner:
+        def run(
+            self,
+            job_key: str,
+            run_id: str,
+            metadata: dict[str, Any],
+            max_runtime_seconds: int | None = None,
+        ) -> RunnerResult:
+            _ = job_key, run_id, metadata, max_runtime_seconds
+            return RunnerResult(
+                status="failed",
+                message="timed out and killed",
+                output={"timedOut": True},
+            )
+
+    job = _make_job(max_runtime_seconds=60)
+    repository = _FakeRepository(job)
+    service = DataJobService(repository=repository, runner_registry={"test.runner": _TimeoutRunner()})
+
+    run = service.run_job(
+        job.job_key,
+        DataJobRunRequest(
+            trigger_type="manual",
+            trigger_source="test",
+            requested_by="test",
+            metadata={},
+        ),
+    )
+
+    assert run.run_status == "failed"
+    assert run.error_code == "runner_timeout_killed"

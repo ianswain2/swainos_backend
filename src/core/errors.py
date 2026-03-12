@@ -44,6 +44,11 @@ class ForbiddenError(AppError):
         super().__init__(code="forbidden", message=message, status_code=403)
 
 
+class TooManyRequestsError(AppError):
+    def __init__(self, message: str = "Rate limit exceeded") -> None:
+        super().__init__(code="too_many_requests", message=message, status_code=429)
+
+
 class ErrorEnvelope(BaseModel):
     error: ErrorDetail
 
