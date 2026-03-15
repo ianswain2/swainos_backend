@@ -12,6 +12,7 @@ FastAPI backend for SwainOS analytics, travel trade intelligence, FX workflows, 
 - `src/core`: config/errors/Supabase client
 - `src/shared`: response/time utilities
 - `scripts`: upsert and refresh operations
+- `supabase/migrations`: ordered SQL migrations and database runtime schema history
 
 ## API Prefix
 Default prefix: `/api/v1`
